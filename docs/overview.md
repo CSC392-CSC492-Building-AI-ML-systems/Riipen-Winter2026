@@ -1,3 +1,7 @@
+The flow should now be:
+  canvas.docker (Browser) -> 192.168.2.57:4567 (Tool) -> canvas.docker (Browser) ->
+  192.168.2.57:4567 (Tool).
+
 ## overview
 
 LTI 1.3 (LTI Advantage) transitions from the older OAuth 1.0a based signing to a modern
@@ -65,4 +69,5 @@ LTI 1.3 is like a secure "handshake" between a Learning Management System
     * `faraday`: This is used to make "phone calls" (HTTP requests) to the LMS. We need
     it when we want to send a grade back to the LMS or ask for a list of everyone in the
     class.
+
 

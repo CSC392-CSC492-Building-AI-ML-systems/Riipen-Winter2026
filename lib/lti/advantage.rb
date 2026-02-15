@@ -7,8 +7,6 @@ require_relative "advantage/oidc/login_initiation"
 require_relative "advantage/message"
 require_relative "advantage/key_store"
 require_relative "advantage/key_pair"
-require_relative "advantage/services/base"
-require_relative "advantage/services/ags"
 
 module Lti
   module Advantage

@@ -37,11 +37,6 @@ module Lti
         raise Error, "Token verification failed: #{e.message}"
       end
 
-      # Returns the URL for sending grades via AGS.
-      def ags_line_item_url
-        jwt_body.dig("https://purl.imsglobal.org/spec/lti-ags/claim/endpoint", "lineitem")
-      end
-
       # Checks if this is a standard LTI Resource Link Launch.
       def resource_launch?
         jwt_body["https://purl.imsglobal.org/spec/lti/claim/message_type"] == "LtiResourceLinkRequest"
