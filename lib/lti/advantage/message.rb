@@ -27,8 +27,11 @@ module Lti
           {
             algorithm: "RS256",
             jwks: { keys: keys },
+            # iss: Who SENT the message? (Canvas)
             iss: issuer,
             verify_iss: true,
+            # aud: Who is SUPPOSED TO RECEIVE the message?
+            # (Your Tool Client ID)
             aud: client_id,
             verify_aud: true
           }
@@ -44,6 +47,16 @@ module Lti
 
       def user_id
         jwt_body["sub"]
+      end
+
+      # Identifies the tool (your app)
+      def client_id
+        jwt_body["aud"]
+      end
+
+      # Identifies the specific installation/deployment instance
+      def deployment_id
+        jwt_body["https://purl.imsglobal.org/spec/lti/claim/deployment_id"]
       end
     end
   end

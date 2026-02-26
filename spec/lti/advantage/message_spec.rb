@@ -27,7 +27,8 @@ RSpec.describe Lti::Advantage::Message do
       sub: "user-123",
       exp: Time.now.to_i + 3600,
       iat: Time.now.to_i,
-      "https://purl.imsglobal.org/spec/lti/claim/message_type": "LtiResourceLinkRequest"
+      "https://purl.imsglobal.org/spec/lti/claim/message_type": "LtiResourceLinkRequest",
+      "https://purl.imsglobal.org/spec/lti/claim/deployment_id": "test-deployment-123"
     }
   end
 
@@ -36,6 +37,14 @@ RSpec.describe Lti::Advantage::Message do
 
   it "extracts the user_id correctly" do
     expect(subject.user_id).to eq("user-123")
+  end
+
+  it "extracts the client_id correctly" do
+    expect(subject.client_id).to eq("my-client-id")
+  end
+
+  it "extracts the deployment_id correctly" do
+    expect(subject.deployment_id).to eq("test-deployment-123")
   end
 
   it "identifies a resource launch" do

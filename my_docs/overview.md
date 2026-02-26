@@ -9,6 +9,13 @@ LTI 1.3 (LTI Advantage) transitions from the older OAuth 1.0a based signing to a
 
   Key Components to Implement
   
+   0. Pre-setting
+       * all of these are based on the case that we have 
+         canvas set up and running,
+         logged in as admin,
+         added the tool (via admin/developer keys)
+         have the tool set for a course
+
 
    1. OIDC Authentication Flow:
        * Login Initiation: The Platform (LMS) sends a request to the Tool's initiation
