@@ -29,8 +29,10 @@ end
 CLIENT_ID = "10000000000001"
 # Use the hostname your browser uses to access Canvas
 LMS_BROWSER_URL = "http://canvas.docker" 
-# The IP your browser uses to reach your Sinatra app
-TOOL_HOST = "192.168.2.57:4567"
+# The NEW IP your browser uses to reach your Sinatra app
+# CHANGE THIS TO YOUR LOCAL IP
+TOOL_HOST = "192.168.2.92:4567"
+LMS_ISSUER = "http://192.168.2.92:3000" # If needed for server-to-server
 
 # Initialize the tool's RSA key pair
 TOOL_KEY_PAIR = Lti::Advantage::KeyPair.new
@@ -74,6 +76,15 @@ end
 
 # 2. Main Launch Endpoint (LTI Launch)
 post "/lti/launch" do
+  puts "Checking for ID Token..."
+  if params[:id_token].nil?
+    if params[:error]
+      halt 400, "LMS Error: #{params[:error]} - #{params[:error_description]}"
+    else
+      halt 400, "Missing id_token. Received params: #{params.keys.join(', ')}"
+    end
+  end
+
   puts "Checking State..."
   puts "Session State: #{session[:lti_state]}"
   puts "Params State:  #{params[:state]}"
