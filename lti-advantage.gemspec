@@ -38,6 +38,10 @@ Gem::Specification.new do |spec|
   spec.add_dependency "faraday", "~> 2.7"
   spec.add_dependency "erb"
 
+  spec.add_development_dependency "rack-test"
+  spec.add_development_dependency "factory_bot"
+  spec.add_development_dependency "rspec"
+
   # For more information and examples about making a new gem, check out our
   # guide at: https://bundler.io/guides/creating_gem.html
 end

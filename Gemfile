@@ -16,3 +16,5 @@ gem "sinatra", "~> 4.0"
 gem "rackup"
 
 gem "puma"
+
+gem "dotenv", "~> 3.2"

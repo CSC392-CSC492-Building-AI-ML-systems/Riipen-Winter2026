@@ -2,13 +2,14 @@
 
 require "sinatra"
 require "securerandom"
+require "dotenv/load"
 require_relative "../lib/lti/advantage"
 
 # Bind to 0.0.0.0 to listen on all network interfaces
 set :bind, "0.0.0.0"
 
 # Disable strict protection and frame options for local LTI testing
-set :protection, except: [:http_origin, :remote_token, :session_hijacking, :frame_options]
+set :protection, except: [:http_origin, :remote_token, :session_hijacking, :frame_options, :host_authorization]
 
 # Allow cookies to be sent in an iframe (SameSite=None; Secure=True is usually required by modern browsers)
 # Note: For local testing without HTTPS, we might still face some cookie blocking.
@@ -25,14 +26,11 @@ before do
   puts "Params: #{params.inspect}" if params.any?
 end
 
-# Mock: Your tool's Client ID registered in the LMS
-CLIENT_ID = "10000000000001"
-# Use the hostname your browser uses to access Canvas
-LMS_BROWSER_URL = "http://canvas.docker" 
-# The NEW IP your browser uses to reach your Sinatra app
-# CHANGE THIS TO YOUR LOCAL IP
-TOOL_HOST = "192.168.2.92:4567"
-LMS_ISSUER = "http://192.168.2.92:3000" # If needed for server-to-server
+# LTI Configuration (Loaded from .env)
+CLIENT_ID       = ENV["CLIENT_ID"]       || "10000000000001"
+LMS_BROWSER_URL = ENV["LMS_BROWSER_URL"] || "http://canvas.docker" 
+TOOL_HOST       = ENV["TOOL_HOST"]       || "127.0.0.1:4567"
+LMS_ISSUER      = ENV["LMS_ISSUER"]      || "http://127.0.0.1:3000"
 
 # Initialize the tool's RSA key pair
 TOOL_KEY_PAIR = Lti::Advantage::KeyPair.new

@@ -1,0 +1,38 @@
+{
+  "name": "riipen-winter2026",
+  "version": "1.0.0",
+  "description": "TODO: Delete this and the text below, and describe your gem",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "lib": "lib",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "npm run test:ruby && npm run test:e2e",
+    "test:e2e": "playwright test",
+    "test:pact:consumer": "jest pact/http/consumer",
+    "test:ruby": "bundle exec rspec"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CSC392-CSC492-Building-AI-ML-systems/Riipen-Winter2026.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/CSC392-CSC492-Building-AI-ML-systems/Riipen-Winter2026/issues"
+  },
+  "homepage": "https://github.com/CSC392-CSC492-Building-AI-ML-systems/Riipen-Winter2026#readme",
+  "devDependencies": {
+    "@faker-js/faker": "^10.3.0",
+    "@pact-foundation/pact": "^16.2.0",
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^25.3.2",
+    "dotenv": "^17.3.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

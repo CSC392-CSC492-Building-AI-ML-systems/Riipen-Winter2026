@@ -34,6 +34,7 @@ module Lti
             lti_message_hint: params[:lti_message_hint],
             state: state,
             nonce: nonce,
+            prompt: "none",
             response_mode: "form_post"
           }.compact
         end

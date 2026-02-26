@@ -6,6 +6,39 @@
 /pkg/
 /spec/reports/
 /tmp/
+/vendor/
 
 # rspec failure tracking
 .rspec_status
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Playwright / Test Artifacts
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+results.xml
+
+# Pact
+pacts/
+
+# Environment
+.env
+.env.local
+.env.test
+
+# Tools & Output
+# .gemini/
+# _bmad/
+# _bmad-output/
+.tmp.md
+Session.vim
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*~
