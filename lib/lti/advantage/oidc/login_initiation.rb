@@ -14,9 +14,9 @@ module Lti
 
         # Validates that we have the minimum required info from the LMS
         def validate!
-          raise Error, "iss (issuer) is missing" if params[:iss].nil?
-          raise Error, "login_hint is missing" if params[:login_hint].nil?
-          raise Error, "target_link_uri is missing" if params[:target_link_uri].nil?
+          raise Error, "iss (issuer) is missing" if params[:iss].to_s.empty?
+          raise Error, "login_hint is missing" if params[:login_hint].to_s.empty?
+          raise Error, "target_link_uri is missing" if params[:target_link_uri].to_s.empty?
         end
 
         # Generates the data needed to redirect the user back to the LMS.
@@ -25,13 +25,16 @@ module Lti
         # @param state [String] A random string to track the request
         # @param nonce [String] A random string to prevent "replay" attacks
         def redirect_params(client_id:, redirect_uri:, state:, nonce:)
+          resolved_client_id = params[:client_id] || client_id
+
           {
             scope: "openid",
             response_type: "id_token",
-            client_id: client_id,
+            client_id: resolved_client_id,
             redirect_uri: redirect_uri,
             login_hint: params[:login_hint],
             lti_message_hint: params[:lti_message_hint],
+            lti_deployment_id: params[:lti_deployment_id],
             state: state,
             nonce: nonce,
             prompt: "none",

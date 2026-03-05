@@ -31,9 +31,12 @@ CLIENT_ID       = ENV["CLIENT_ID"]       || "10000000000001"
 LMS_BROWSER_URL = ENV["LMS_BROWSER_URL"] || "http://canvas.docker" 
 TOOL_HOST       = ENV["TOOL_HOST"]       || "127.0.0.1:4567"
 LMS_ISSUER      = ENV["LMS_ISSUER"]      || "http://127.0.0.1:3000"
+LMS_JWKS_URL    = ENV["LMS_JWKS_URL"]    || "#{LMS_ISSUER}/api/lti/security/jwks"
+DEPLOYMENT_ID   = ENV["LTI_DEPLOYMENT_ID"] || "test-deployment-123"
 
 # Initialize the tool's RSA key pair
 TOOL_KEY_PAIR = Lti::Advantage::KeyPair.new
+NONCE_STORE = Lti::Advantage::NonceStore.new
 
 # 0. JWKS Endpoint (Exposes your public keys)
 get "/lti/jwks" do
@@ -89,19 +92,24 @@ post "/lti/launch" do
 
   # A. Security check: verify the state matches the session
   if params[:state] != session[:lti_state]
-    puts "WARNING: State mismatch! (Expected in local HTTP testing). Continuing anyway..."
-    # halt 403, "Invalid State" # Temporarily disabled for local dev
+    halt 403, "Invalid state"
   end
   
   # B. Parse and verify the JWT (ID Token)
   message = Lti::Advantage::Message.new(params[:id_token])
-  
-  # In a real scenario, you would fetch public keys from the LMS JWKS URL
-  # keys = Lti::Advantage::KeyStore.new("http://localhost:3000/api/lti/security/jwks").keys
-  keys = [] # TODO: Populate with real public keys from the LMS
+  key_store = Lti::Advantage::KeyStore.new(LMS_JWKS_URL)
   
   begin
-    # message.verify!(keys: keys, client_id: CLIENT_ID, issuer: LMS_ISSUER)
+    message.verify!(key_store: key_store, client_id: CLIENT_ID, issuer: LMS_ISSUER)
+    message.validate_nonce!(expected_nonce: session[:lti_nonce])
+    NONCE_STORE.consume!(message.nonce, expires_at: message.jwt_body["exp"])
+    message.validate_resource_link_launch!(
+      expected_deployment_id: DEPLOYMENT_ID,
+      expected_target_link_uri: "http://#{TOOL_HOST}/lti/launch"
+    )
+
+    session.delete(:lti_state)
+    session.delete(:lti_nonce)
     
     # If verification passes, display welcome message
     "Welcome, student! Your ID is: #{message.user_id}. Launch successful!"
