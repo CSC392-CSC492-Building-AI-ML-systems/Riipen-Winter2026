@@ -4,12 +4,32 @@ require "securerandom"
 
 module Lti
   module Advantage
+    # High-level tool-side API for the LTI 1.3 core launch lifecycle.
+    #
+    # Typical usage:
+    #
+    # 1. Configure one or more {Registration} instances
+    # 2. Build a {Client}
+    # 3. Call {#authentication_request} for login initiation callbacks
+    # 4. Call {#validate_launch!} for launch callbacks containing +id_token+
     class Client
+      # Default state TTL (seconds).
       DEFAULT_STATE_TTL = 300
+
+      # Default nonce TTL (seconds).
       DEFAULT_NONCE_TTL = 300
 
+      # Stores used for state and nonce replay-protection material.
       attr_reader :state_store, :nonce_store
 
+      # registrations:: Enumerable collection of {Registration} objects.
+      # state_store:: Store object supporting +write+, +read+, and +consume+.
+      # nonce_store:: Store object supporting +write+, +read+, and +consume+.
+      # jwks_repository:: Source used by {LaunchValidator} for platform JWKS.
+      # state_generator:: Callable used to create one-time state values.
+      # nonce_generator:: Callable used to create one-time nonce values.
+      # state_ttl:: TTL (seconds) for stored state entries.
+      # nonce_ttl:: TTL (seconds) for stored nonce entries.
       def initialize(
         registrations:, state_store: Store::MemoryStore.new, nonce_store: Store::MemoryStore.new,
         jwks_repository: JwksRepository.new,
@@ -33,6 +53,13 @@ module Lti
         )
       end
 
+      # Builds an OIDC authentication request URL from login initiation params.
+      #
+      # login_params:: Hash-like request params received at tool login endpoint.
+      # redirect_uri:: Tool endpoint that receives form_post launch responses.
+      #
+      # Returns an {OIDC::AuthenticationRequest}.
+      # Raises {ValidationError} when platform or deployment values are invalid.
       def authentication_request(login_params:, redirect_uri:)
         login = OIDC::LoginInitiation.new(login_params)
         registration = @registration_store.resolve!(issuer: login.issuer, client_id: login.client_id)
@@ -71,6 +98,10 @@ module Lti
         )
       end
 
+      # Validates a posted +id_token+ and returns a parsed {Launch} object.
+      #
+      # id_token:: Signed JWT from platform launch callback.
+      # state:: One-time state value from launch callback.
       def validate_launch!(id_token:, state:)
         @launch_validator.validate!(id_token: id_token, state: state)
       end

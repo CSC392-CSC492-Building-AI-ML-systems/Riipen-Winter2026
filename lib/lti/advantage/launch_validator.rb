@@ -4,7 +4,17 @@ require "jwt"
 
 module Lti
   module Advantage
+    # Validates signed +id_token+ launches for LTI 1.3 resource links.
+    #
+    # Validation responsibilities include:
+    #
+    # - JWT signature verification using the platform JWKS
+    # - OIDC issuer, audience, +iat+, and +exp+ checks
+    # - Required LTI claim presence and shape checks
+    # - Deployment, target link, and nonce/state binding checks
+    # - Replay protection by consuming one-time +state+ and +nonce+
     class LaunchValidator
+      # Required LTI claim URIs for resource-link launches.
       REQUIRED_CLAIMS = [
         Claims::MESSAGE_TYPE,
         Claims::VERSION,
@@ -14,6 +24,12 @@ module Lti
         Claims::ROLES
       ].freeze
 
+      # registration_store:: Resolver for platform registrations.
+      # state_store:: One-time store used for state validation.
+      # nonce_store:: One-time store used for nonce replay protection.
+      # jwks_repository:: Source for platform JWKS documents.
+      # allowed_message_types:: Allowed LTI message type values.
+      # leeway:: Clock skew leeway (seconds) for JWT timestamp checks.
       def initialize(
         registration_store:, state_store:, nonce_store:, jwks_repository: JwksRepository.new,
         allowed_message_types: ["LtiResourceLinkRequest"], leeway: 5
@@ -26,6 +42,13 @@ module Lti
         @leeway = leeway
       end
 
+      # Validates an LTI launch token and returns a {Launch} object.
+      #
+      # id_token:: Signed JWT posted by the platform in the launch request.
+      # state:: One-time state value previously issued in auth request.
+      #
+      # Raises {ValidationError}, {ReplayError}, or {JwtVerificationError} when
+      # validation fails.
       def validate!(id_token:, state:)
         state_token = state.to_s
         state_data = @state_store.read(state_token)
@@ -64,6 +87,7 @@ module Lti
 
       private
 
+      # Builds JWT.decode options derived from registration policy.
       def decode_options(registration)
         {
           algorithms: registration.algorithms,
@@ -77,6 +101,7 @@ module Lti
         }
       end
 
+      # Resolves the OpenSSL public key from JWKS using header +kid+.
       def resolve_verification_key(jwt_header, registration)
         kid = jwt_header["kid"]
         jwk_set = as_jwk_set(@jwks_repository.fetch(registration.jwks_url))
@@ -92,6 +117,7 @@ module Lti
         key.public_key
       end
 
+      # Normalizes supported JWKS representations into JWT::JWK::Set.
       def as_jwk_set(jwks)
         case jwks
         when JWT::JWK::Set
@@ -105,6 +131,7 @@ module Lti
         end
       end
 
+      # Enforces required LTI claims and request-bound consistency checks.
       def validate_lti_claims!(payload, state_data, registration)
         missing_claims = REQUIRED_CLAIMS.reject { |claim| payload.key?(claim) }
         unless missing_claims.empty?
@@ -158,6 +185,7 @@ module Lti
         validate_nonce_binding!(payload, state_data)
       end
 
+      # Verifies that a claim exists and is a non-empty String value.
       def validate_non_empty_string_claim!(payload, claim)
         value = payload[claim]
         return unless value.to_s.empty?
@@ -166,6 +194,7 @@ module Lti
               "#{claim.split("/").last} claim must be a non-empty string"
       end
 
+      # Validates +aud+ and +azp+ relationship according to OIDC rules.
       def validate_audience_authorized_party!(payload, registration)
         audience = payload["aud"]
         audience = [audience] if audience.is_a?(String)
@@ -181,6 +210,7 @@ module Lti
               "azp claim mismatch. Expected #{registration.client_id}, got #{payload["azp"]}"
       end
 
+      # Ensures launch nonce matches the nonce bound to this state value.
       def validate_nonce_binding!(payload, state_data)
         expected_nonce = state_data[:nonce]
         return if expected_nonce.nil?
@@ -189,11 +219,13 @@ module Lti
         raise ValidationError, "nonce does not match the provided state"
       end
 
+      # Consumes state after successful token and claim validation.
       def consume_state!(state)
         consumed = @state_store.consume(state)
         raise ReplayError, "Invalid, expired, or replayed state" if consumed.nil?
       end
 
+      # Consumes nonce to enforce single-use launch tokens.
       def consume_nonce!(nonce)
         raise ValidationError, "nonce claim is required" if nonce.to_s.empty?
 

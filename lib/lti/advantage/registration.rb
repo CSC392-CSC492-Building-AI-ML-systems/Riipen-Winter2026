@@ -2,9 +2,24 @@
 
 module Lti
   module Advantage
+    # Immutable registration details for one LTI platform integration.
+    #
+    # A registration models the security contract established between a tool and
+    # a platform (issuer, OAuth2 client id, authorization endpoint, and JWKS
+    # endpoint). A single registration may allow one or many deployment ids.
     class Registration
+      # OIDC issuer identifier used for +iss+ claim verification.
       attr_reader :issuer, :client_id, :authorization_endpoint, :jwks_url, :deployment_ids, :algorithms
 
+      # Builds a platform registration.
+      #
+      # issuer:: Platform issuer URL from OIDC/LTI configuration.
+      # client_id:: OAuth2 client id assigned to the tool.
+      # authorization_endpoint:: Platform OIDC auth endpoint.
+      # jwks_url:: Platform JWKS URL used to verify launch signatures.
+      # deployment_ids:: Allowed deployment ids for this registration. If empty,
+      #                  any non-empty deployment id is accepted.
+      # algorithms:: Accepted JWT signature algorithms. Defaults to +RS256+.
       def initialize(issuer:, client_id:, authorization_endpoint:, jwks_url:, deployment_ids: [], algorithms: ["RS256"])
         @issuer = assert_presence("issuer", issuer)
         @client_id = assert_presence("client_id", client_id)
@@ -14,6 +29,10 @@ module Lti
         @algorithms = Array(algorithms).map(&:to_s).freeze
       end
 
+      # Returns +true+ when +deployment_id+ is allowed by this registration.
+      #
+      # An empty +deployment_ids+ list means the registration does not constrain
+      # deployment ids, but the provided +deployment_id+ must still be non-empty.
       def supports_deployment?(deployment_id)
         return false if deployment_id.nil? || deployment_id.empty?
         return true if deployment_ids.empty?

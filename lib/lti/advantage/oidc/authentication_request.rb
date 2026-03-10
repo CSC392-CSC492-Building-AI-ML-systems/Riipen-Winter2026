@@ -5,9 +5,15 @@ require "uri"
 module Lti
   module Advantage
     module OIDC
+      # Serializable OpenID authentication request for LTI 1.3 launches.
+      #
+      # The generated URL includes OIDC required parameters and optional LTI
+      # hints, ready to use in an HTTP redirect response.
       class AuthenticationRequest
+        # Required parameter keys for request construction.
         REQUIRED_PARAMETERS = %w[client_id redirect_uri login_hint state nonce target_link_uri].freeze
 
+        # Default OIDC parameter values required by LTI 1.3.
         DEFAULT_PARAMETERS = {
           "response_type" => "id_token",
           "response_mode" => "form_post",
@@ -17,6 +23,17 @@ module Lti
 
         attr_reader :authorization_endpoint, :state, :nonce
 
+        # authorization_endpoint:: Platform OIDC auth endpoint URL.
+        # client_id:: OAuth2 client id assigned by the platform.
+        # redirect_uri:: Tool launch endpoint that receives +id_token+.
+        # login_hint:: Opaque login hint from initiation request.
+        # state:: One-time state token for CSRF/replay protection.
+        # nonce:: One-time nonce token for id_token replay protection.
+        # target_link_uri:: Tool URL expected in launch claim validation.
+        # lti_message_hint:: Optional opaque LTI message hint.
+        # lti_deployment_id:: Optional deployment hint.
+        #
+        # Raises {ValidationError} if required values are blank.
         def initialize(
           authorization_endpoint:, client_id:, redirect_uri:, login_hint:,
           state:, nonce:, target_link_uri:, lti_message_hint: nil, lti_deployment_id: nil
@@ -39,10 +56,12 @@ module Lti
           assert_required_params!
         end
 
+        # Returns the full request parameter hash as String keys.
         def parameters
           DEFAULT_PARAMETERS.merge(@params).compact
         end
 
+        # Returns the final redirect URL to the authorization endpoint.
         def url
           uri = URI.parse(authorization_endpoint)
           existing_params = uri.query.nil? ? {} : URI.decode_www_form(uri.query).to_h

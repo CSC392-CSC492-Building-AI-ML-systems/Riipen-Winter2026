@@ -6,9 +6,17 @@ require "uri"
 
 module Lti
   module Advantage
+    # Fetches and caches JSON Web Key Sets (JWKS) for platform key material.
+    #
+    # By default this class performs HTTPS GET requests with +Net::HTTP+ and
+    # caches parsed responses in-process for a short TTL.
     class JwksRepository
+      # Default cache TTL in seconds.
       DEFAULT_CACHE_TTL = 300
 
+      # cache_ttl:: Cache lifetime in seconds for each JWKS URL.
+      # clock:: Callable returning current time for TTL comparisons.
+      # http_get:: Optional callable for HTTP fetches, used for testing.
       def initialize(cache_ttl: DEFAULT_CACHE_TTL, clock: -> { Time.now }, http_get: nil)
         @cache_ttl = cache_ttl
         @clock = clock
@@ -16,6 +24,10 @@ module Lti
         @cache = {}
       end
 
+      # Retrieves and parses the JWKS payload for +url+.
+      #
+      # Returns a Hash containing the parsed JSON object.
+      # Raises {JwtVerificationError} when retrieval or parsing fails.
       def fetch(url)
         cached = @cache[url]
         return cached[:value] if cached && cached[:expires_at] > @clock.call

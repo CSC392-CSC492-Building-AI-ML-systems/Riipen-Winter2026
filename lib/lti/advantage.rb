@@ -23,6 +23,9 @@ module Lti
   # 1. Validate login initiation parameters from a platform
   # 2. Generate a compliant OpenID authentication request URL
   # 3. Validate a signed +id_token+ launch payload
+  #
+  # See {Client#authentication_request} and {Client#validate_launch!} for the
+  # main lifecycle methods.
   module Advantage
     # Namespace for OpenID Connect request/response objects used by LTI 1.3.
     module OIDC
