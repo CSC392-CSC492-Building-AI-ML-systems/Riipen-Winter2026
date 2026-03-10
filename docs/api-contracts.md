@@ -15,7 +15,7 @@ This document details the endpoints used during the LTI 1.3 Advantage handshake.
 
 ### Behavior
 - Validates required parameters.
-- Generates `state` and `nonce` (stored in session).
+- Generates `state` and `nonce` in the configured replay-protection stores.
 - Responds with an auto-submitting HTML form to the Platform's OIDC authorization endpoint.
 
 ---
@@ -30,10 +30,10 @@ This document details the endpoints used during the LTI 1.3 Advantage handshake.
 - `state` (string, required): The random string sent during initiation to prevent CSRF.
 
 ### Behavior
-- Verifies `state` against session.
+- Validates the stored `state` value.
 - Decodes and verifies the `id_token` (JWT) signature using the Platform's public keys.
-- Validates standard claims (`iss`, `aud`, `exp`, `iat`).
-- Processes LTI-specific claims (e.g., `https://purl.imsglobal.org/spec/lti/claim/message_type`).
+- Validates standard claims (`iss`, `aud`, `exp`, `iat`, and `azp` when needed).
+- Validates required LTI-specific claims and consumes `state` and `nonce` for replay protection.
 
 ---
 

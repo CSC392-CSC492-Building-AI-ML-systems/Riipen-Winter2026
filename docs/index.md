@@ -8,27 +8,27 @@ Welcome to the documentation for the `lti-advantage` library and the Sinatra dem
 
 - **Type:** Ruby Library (Primary) with Sinatra Backend (Demo)
 - **Primary Language:** Ruby 3.4.0
-- **Architecture:** LTI 1.3 Advantage Handshake (OIDC-based)
+- **Architecture:** LTI 1.3 core launch implementation with a `Client`-based API
 
 ### Quick Reference
 
 #### LTI Advantage Library (core)
-- **Tech Stack:** Ruby, JWT, Faraday
+- **Tech Stack:** Ruby, JWT, Net::HTTP
 - **Root:** `lib/`
-- **Purpose:** Core logic for LTI 1.3 Advantage messages and OIDC initiation.
+- **Purpose:** Core login initiation parsing, authentication request generation, launch validation, and replay protection.
 
 #### Sinatra Demo App (demo)
 - **Tech Stack:** Sinatra, Puma, Rack
 - **Root:** `demo/`
-- **Purpose:** Functional prototype for local LTI 1.3 testing with an LMS (e.g., Canvas).
+- **Purpose:** Example tool app using `Lti::Advantage::Client` for core launch flow and `Lti::Advantage::KeyPair` for `/lti/jwks`.
 
 ---
 
 ## Core Handshake Documentation
 
-- **[Core Launch Flow](./core-launch-flow.md)** - Detailed analysis of the LTI 1.3 handshake (OIDC initiation & launch).
+- **[Core Launch Flow](./core-launch-flow.md)** - Detailed analysis of the `Client`-based LTI 1.3 handshake.
 - **[API Contracts](./api-contracts.md)** - Endpoints and request/response schemas for the launch flow.
-- **[Data Models](./data-models.md)** - Structure of LTI Messages (JWT) and JWKS.
+- **[Data Models](./data-models.md)** - Core registration, launch, JWT, and JWKS data structures.
 
 ---
 
@@ -45,10 +45,9 @@ Welcome to the documentation for the `lti-advantage` library and the Sinatra dem
 1. **Install Dependencies:** `bundle install`
 2. **Run Tests:** `bundle exec rspec`
 3. **Run Demo App:** `ruby demo/app.rb`
-4. **Local LTI Testing:** Update `TOOL_HOST` and `LMS_BROWSER_URL` in `demo/app.rb` with your local IP and LMS URL.
+4. **Local LTI Testing:** Configure `CLIENT_ID`, `LMS_ISSUER`, `LMS_AUTH_URL`, `LMS_JWKS_URL`, `LTI_DEPLOYMENT_ID`, and `TOOL_HOST` in your environment.
 
 ---
 
-Last Updated: 2026-02-26
-Status: Complete
-Docs Generated: 4 (api-contracts, data-models, core-launch-flow, index)
+Last Updated: 2026-03-08
+Status: Current
