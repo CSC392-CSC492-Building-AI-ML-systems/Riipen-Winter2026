@@ -16,5 +16,11 @@ module Lti
 
     # Raised when JWT decoding, JWKS retrieval, or signature verification fails.
     class JwtVerificationError < Error; end
+
+    # Raised when a service operation is attempted without the required grant.
+    class AuthorizationError < Error; end
+
+    # Raised when an outbound LTI service call or response is invalid.
+    class ServiceError < Error; end
   end
 end
