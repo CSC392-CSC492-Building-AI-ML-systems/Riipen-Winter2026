@@ -30,6 +30,23 @@ module Lti
           ScoreService.new(service_client: self)
         end
 
+        def result_service
+          ResultService.new(service_client: self)
+        end
+
+        def get_json(url:, accept:, scopes:)
+          response = request(
+            method: :get,
+            url: url,
+            scopes: scopes,
+            headers: { "Accept" => accept }
+          )
+          body = response.respond_to?(:body) ? response.body : response[:body]
+          return [] if body.nil? || body.to_s.strip.empty?
+
+          JSON.parse(body)
+        end
+
         def post_json(url:, body:, content_type:, accept:, scopes:)
           response = request(
             method: :post,
