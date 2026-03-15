@@ -12,6 +12,8 @@ module Lti
       # registration:: {Registration} selected for this launch.
       attr_reader :payload, :header, :registration
 
+      NRPS_CLAIM = "https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice"
+
       def initialize(payload:, header:, registration:)
         @payload = payload
         @header = header
@@ -61,6 +63,29 @@ module Lti
       # Convenience accessor for any arbitrary claim URI or key.
       def [](claim)
         payload[claim]
+      end
+
+      # Returns the raw Names and Role Provisioning Service claim hash,
+      # or nil if the LMS did not include NRPS in the launch token.
+      def nrps_claim
+        payload[NRPS_CLAIM]
+      end
+
+      # Returns the context memberships URL to pass to NamesRoleService.
+      # Returns nil if NRPS is not available for this launch.
+      def context_memberships_url
+        nrps_claim&.fetch("context_memberships_url", nil)
+      end
+
+      # Returns the NRPS service versions supported by the LMS, e.g. ["2.0"].
+      # Returns an empty array if the NRPS claim is absent.
+      def nrps_service_versions
+        Array(nrps_claim&.fetch("service_versions", nil))
+      end
+
+      # Returns true when the launch includes a valid NRPS memberships URL.
+      def nrps_available?
+        !context_memberships_url.nil?
       end
     end
   end
