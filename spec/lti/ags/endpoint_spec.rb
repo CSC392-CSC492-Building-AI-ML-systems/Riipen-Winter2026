@@ -7,7 +7,7 @@ RSpec.describe Lti::Advantage::AGS::Endpoint do
       "lineitem" => "https://platform.example/line_items/42",
       "scope" => [
         described_class::SCORE_SCOPE,
-        described_class::RESULT_READONLY_SCOPE
+        described_class::RESULT_SCOPE
       ]
     }
   end
@@ -27,7 +27,7 @@ RSpec.describe Lti::Advantage::AGS::Endpoint do
   it "raises when score scope is missing" do
     readonly_endpoint = described_class.new(
       "lineitem" => "https://platform.example/line_items/42",
-      "scope" => [described_class::RESULT_READONLY_SCOPE]
+      "scope" => [described_class::RESULT_SCOPE]
     )
 
     expect { readonly_endpoint.score_url }

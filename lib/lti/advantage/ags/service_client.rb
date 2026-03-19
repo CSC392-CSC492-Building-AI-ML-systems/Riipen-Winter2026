@@ -41,10 +41,28 @@ module Lti
             scopes: scopes,
             headers: { "Accept" => accept }
           )
-          body = response.respond_to?(:body) ? response.body : response[:body]
-          return [] if body.nil? || body.to_s.strip.empty?
+
+          body = response.body.to_s.strip
+          return [] if body.empty?
 
           JSON.parse(body)
+        end
+
+        # GET request that returns both parsed JSON body and the raw response for header inspection.
+        # Use this when the client needs to read headers (e.g. Link for pagination).
+        # @return [Hash] { data: parsed_json, link_header: String|nil }
+        def get_json_with_headers(url:, accept:, scopes:)
+          response = request(
+            method: :get,
+            url: url,
+            scopes: scopes,
+            headers: { "Accept" => accept }
+          )
+
+          body = response.body.to_s.strip
+          data = body.empty? ? [] : JSON.parse(body)
+          link_header = read_link_header(response)
+          { data: data, link_header: link_header }
         end
 
         def post_json(url:, body:, content_type:, accept:, scopes:)
@@ -157,6 +175,16 @@ module Lti
           }
         rescue JSON::ParserError => e
           raise AuthorizationError, "AGS access token response is not valid JSON: #{e.message}"
+        end
+
+        def read_link_header(response)
+          return response.link_header if response.respond_to?(:link_header)
+          return response["Link"] if response.respond_to?(:[]) && response["Link"]
+
+          nil
+        rescue NameError
+          # Struct (e.g. 2-member test double) has [] but no "Link" member
+          nil
         end
 
         def validate_service_response!(response, success_codes: (200..299).to_a)
