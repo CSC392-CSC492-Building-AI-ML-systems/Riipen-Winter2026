@@ -8,6 +8,7 @@ module Lti
       class Endpoint
         SCORE_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/score"
         LINEITEM_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/lineitem"
+        LINEITEM_READONLY_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/lineitem.readonly"
         RESULT_READONLY_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/result.readonly"
 
         attr_reader :lineitems_url, :lineitem_url, :scopes
@@ -43,13 +44,42 @@ module Lti
           uri.to_s
         end
 
+        def line_item_url
+          lineitem_url
+        end
+
+        def lineitems_url!(lineitems_url: nil, write: false)
+          require_line_item_scope!(write: write)
+
+          candidate = optional_string(lineitems_url) || @lineitems_url
+          return candidate unless candidate.nil?
+
+          raise ValidationError, "An AGS lineitems URL is required for line item collection operations"
+        end
+
+        def line_item_url!(line_item_url: nil, write: false)
+          require_line_item_scope!(write: write)
+          resolve_line_item_url(line_item_url, purpose: "line item operations")
+        end
+
         private
 
-        def resolve_line_item_url(explicit_line_item_url)
+        def require_line_item_scope!(write:)
+          if write
+            require_scope!(LINEITEM_SCOPE)
+          elsif supports_scope?(LINEITEM_SCOPE) || supports_scope?(LINEITEM_READONLY_SCOPE)
+            return
+          else
+            raise AuthorizationError,
+                  "AGS scope #{LINEITEM_SCOPE} or #{LINEITEM_READONLY_SCOPE} is not granted for this launch"
+          end
+        end
+
+        def resolve_line_item_url(explicit_line_item_url, purpose: "score publishing")
           candidate = optional_string(explicit_line_item_url) || lineitem_url
           return candidate unless candidate.nil?
 
-          raise ValidationError, "A concrete AGS lineitem URL is required for score publishing"
+          raise ValidationError, "A concrete AGS lineitem URL is required for #{purpose}"
         end
 
         def optional_string(value)

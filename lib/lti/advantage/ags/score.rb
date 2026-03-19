@@ -8,6 +8,7 @@ module Lti
       class Score
         ACTIVITY_PROGRESS_VALUES = %w[Initialized Started InProgress Submitted Completed].freeze
         GRADING_PROGRESS_VALUES = %w[NotReady Failed Pending PendingManual FullyGraded].freeze
+        TIMESTAMP_FORMAT = /\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+(?:Z|[+-]\d{2}(?::?\d{2})?)\z/.freeze
 
         attr_reader :user_id, :timestamp, :activity_progress, :grading_progress,
                     :score_given, :score_maximum, :comment, :scoring_user_id, :submission
@@ -72,9 +73,6 @@ module Lti
           raise ValidationError, "scoreMaximum must be numeric" unless score_maximum.nil? || score_maximum.is_a?(Numeric)
           raise ValidationError, "scoreMaximum must be greater than zero" if !score_maximum.nil? && score_maximum <= 0
           raise ValidationError, "scoreGiven cannot be negative" if !score_given.nil? && score_given.negative?
-          return if score_given.nil? || score_maximum.nil? || score_given <= score_maximum
-
-          raise ValidationError, "scoreGiven cannot exceed scoreMaximum"
         end
 
         def validate_submission!
@@ -86,12 +84,26 @@ module Lti
 
             parse_timestamp!(value, field: "submission.#{field}")
           end
+
+          return if submission["startedAt"].nil? || submission["submittedAt"].nil?
+
+          started_at = Time.iso8601(submission["startedAt"])
+          submitted_at = Time.iso8601(submission["submittedAt"])
+          return if submitted_at >= started_at
+
+          raise ValidationError, "submission.submittedAt must be equal to or later than submission.startedAt"
         end
 
         def parse_timestamp!(value, field:)
+          unless TIMESTAMP_FORMAT.match?(value)
+            raise ValidationError,
+                  "#{field} must be an ISO8601 timestamp with sub-second precision and timezone"
+          end
+
           Time.iso8601(value)
         rescue ArgumentError
-          raise ValidationError, "#{field} must be a valid ISO8601 timestamp"
+          raise ValidationError,
+                "#{field} must be an ISO8601 timestamp with sub-second precision and timezone"
         end
 
         def normalize_submission(submission_value)

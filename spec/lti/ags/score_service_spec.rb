@@ -96,6 +96,24 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
   end
 
   it "reuses the cached access token for repeated score publishes" do
+    first_score_payload = {
+      user_id: "user-123",
+      timestamp: "2026-03-11T20:10:06.123Z",
+      activity_progress: "Completed",
+      grading_progress: "FullyGraded",
+      score_given: 9,
+      score_maximum: 10
+    }
+    second_score_payload = first_score_payload.merge(timestamp: "2026-03-11T20:10:07.123Z")
+
+    score_service.publish(score: first_score_payload)
+    score_service.publish(score: second_score_payload)
+
+    token_requests = requests.count { |request| request[:url] == "https://platform.example/oauth2/token" }
+    expect(token_requests).to eq(1)
+  end
+
+  it "rejects repeated score publishes with the same timestamp for the same user and line item" do
     score_payload = {
       user_id: "user-123",
       timestamp: "2026-03-11T20:10:06.123Z",
@@ -106,10 +124,36 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
     }
 
     score_service.publish(score: score_payload)
-    score_service.publish(score: score_payload)
 
-    token_requests = requests.count { |request| request[:url] == "https://platform.example/oauth2/token" }
-    expect(token_requests).to eq(1)
+    expect do
+      score_service.publish(score: score_payload)
+    end.to raise_error(Lti::Advantage::ValidationError, /strictly increasing/)
+  end
+
+  it "rejects out-of-order score publishes for the same user and line item" do
+    score_service.publish(
+      score: {
+        user_id: "user-123",
+        timestamp: "2026-03-11T20:10:07.123Z",
+        activity_progress: "Completed",
+        grading_progress: "FullyGraded",
+        score_given: 9,
+        score_maximum: 10
+      }
+    )
+
+    expect do
+      score_service.publish(
+        score: {
+          user_id: "user-123",
+          timestamp: "2026-03-11T20:10:06.123Z",
+          activity_progress: "Completed",
+          grading_progress: "FullyGraded",
+          score_given: 8,
+          score_maximum: 10
+        }
+      )
+    end.to raise_error(Lti::Advantage::ValidationError, /strictly increasing/)
   end
 
   it "raises when the launch is missing score scope" do

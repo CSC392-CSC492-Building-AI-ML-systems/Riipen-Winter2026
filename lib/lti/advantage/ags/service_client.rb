@@ -30,9 +30,29 @@ module Lti
           ScoreService.new(service_client: self)
         end
 
+        def line_item_service
+          LineItemService.new(service_client: self)
+        end
+
         def post_json(url:, body:, content_type:, accept:, scopes:)
           response = request(
             method: :post,
+            url: url,
+            body: JSON.generate(body),
+            scopes: scopes,
+            headers: {
+              "Content-Type" => content_type,
+              "Accept" => accept
+            }
+          )
+
+          validate_service_response!(response, success_codes: [200, 201])
+          response
+        end
+
+        def put_json(url:, body:, content_type:, accept:, scopes:)
+          response = request(
+            method: :put,
             url: url,
             body: JSON.generate(body),
             scopes: scopes,
@@ -169,6 +189,8 @@ module Lti
           request_class = case method.to_sym
                           when :get then Net::HTTP::Get
                           when :post then Net::HTTP::Post
+                          when :put then Net::HTTP::Put
+                          when :delete then Net::HTTP::Delete
                           else
                             raise ArgumentError, "Unsupported HTTP method: #{method}"
                           end
