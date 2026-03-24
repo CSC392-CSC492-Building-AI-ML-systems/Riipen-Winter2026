@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "sinatra"
-require "securerandom"
 require "dotenv/load"
 require_relative "../lib/lti/advantage"
 
@@ -9,16 +8,16 @@ require_relative "../lib/lti/advantage"
 set :bind, "0.0.0.0"
 
 # Disable strict protection and frame options for local LTI testing
-set :protection, except: [:http_origin, :remote_token, :session_hijacking, :frame_options, :host_authorization]
+set :protection, except: %i[http_origin remote_token session_hijacking frame_options host_authorization]
 
 # Allow cookies to be sent in an iframe (SameSite=None; Secure=True is usually required by modern browsers)
 # Note: For local testing without HTTPS, we might still face some cookie blocking.
-use Rack::Session::Cookie, 
-  key: "rack.session",
-  path: "/",
-  secret: "a_very_long_and_very_secure_secret_key_that_is_at_least_64_bytes_long_1234567890_abcdefg",
-  same_site: :none,
-  secure: false 
+use Rack::Session::Cookie,
+    key: "rack.session",
+    path: "/",
+    secret: "a_very_long_and_very_secure_secret_key_that_is_at_least_64_bytes_long_1234567890_abcdefg",
+    same_site: :none,
+    secure: false
 
 # Log every request to the terminal
 before do
@@ -26,15 +25,57 @@ before do
   puts "Params: #{params.inspect}" if params.any?
 end
 
+helpers do
+  def normalized_param(name)
+    value = params[name]&.to_s&.strip
+    value.nil? || value.empty? ? nil : value
+  end
+
+  def integer_param(name)
+    value = normalized_param(name)
+    value ? Integer(value, 10) : nil
+  end
+
+  def memberships_response_body(result)
+    {
+      context: result.context,
+      members: result.members.map do |member|
+        {
+          user_id: member.user_id,
+          name: member.name,
+          email: member.email,
+          roles: member.roles,
+          status: member.status
+        }
+      end,
+      next_page_url: result.next_page_url,
+      differences_url: result.differences_url
+    }
+  end
+end
+
 # LTI Configuration (Loaded from .env)
 CLIENT_ID       = ENV["CLIENT_ID"]       || "10000000000001"
-LMS_BROWSER_URL = ENV["LMS_BROWSER_URL"] || "http://canvas.docker" 
+LMS_BROWSER_URL = ENV["LMS_BROWSER_URL"] || "http://canvas.docker"
 TOOL_HOST       = ENV["TOOL_HOST"]       || "127.0.0.1:4567"
 LMS_ISSUER      = ENV["LMS_ISSUER"]      || "http://127.0.0.1:3000"
-LMS_TOKEN_ENDPOINT = "#{LMS_BROWSER_URL}/login/oauth2/token"
+LMS_AUTH_URL    = ENV["LMS_AUTH_URL"]    || "#{LMS_BROWSER_URL}/api/lti/authorize_redirect"
+LMS_JWKS_URL    = ENV["LMS_JWKS_URL"]    || "#{LMS_ISSUER}/api/lti/security/jwks"
+LMS_TOKEN_ENDPOINT = ENV["LMS_TOKEN_ENDPOINT"] || "#{LMS_BROWSER_URL}/login/oauth2/token"
+DEPLOYMENT_ID   = ENV["LTI_DEPLOYMENT_ID"] || "test-deployment-123"
+TOOL_LAUNCH_URL = "http://#{TOOL_HOST}/lti/launch".freeze
 
 # Initialize the tool's RSA key pair
 TOOL_KEY_PAIR = Lti::Advantage::KeyPair.new
+LTI_REGISTRATION = Lti::Advantage::Registration.new(
+  issuer: LMS_ISSUER,
+  client_id: CLIENT_ID,
+  authorization_endpoint: LMS_AUTH_URL,
+  jwks_url: LMS_JWKS_URL,
+  token_endpoint: LMS_TOKEN_ENDPOINT,
+  deployment_ids: [DEPLOYMENT_ID]
+)
+LTI_CLIENT = Lti::Advantage::Client.new(registrations: [LTI_REGISTRATION])
 
 # 0. JWKS Endpoint (Exposes your public keys)
 get "/lti/jwks" do
@@ -43,85 +84,62 @@ get "/lti/jwks" do
 end
 
 # 1. Login Initiation (OIDC Initiation)
-[:get, :post].each do |method|
+%i[get post].each do |method|
   send(method, "/oidc/init") do
-    initiation = Lti::Advantage::Oidc::LoginInitiation.new(params)
-    
-    begin
-      initiation.validate!
-      
-      state = SecureRandom.hex(16)
-      nonce = SecureRandom.hex(16)
-      session[:lti_state] = state
-      session[:lti_nonce] = nonce
-      
-      redirect_params = initiation.redirect_params(
-        client_id: CLIENT_ID,
-        redirect_uri: "http://#{TOOL_HOST}/lti/launch",
-        state: state,
-        nonce: nonce
-      )
-      
-      # Use the BROWSER URL for this jump
-      auth_url = "#{LMS_BROWSER_URL}/api/lti/authorize_redirect"
-      puts "Redirecting browser back to Canvas at: #{auth_url}"
-      
-      erb :redirect, locals: { url: auth_url, params: redirect_params }
-    rescue Lti::Advantage::Error => e
-      halt 400, "Validation Error: #{e.message}"
-    end
+    auth_request = LTI_CLIENT.authentication_request(
+      login_params: params,
+      redirect_uri: TOOL_LAUNCH_URL
+    )
+
+    puts "Redirecting browser back to Canvas at: #{auth_request.authorization_endpoint}"
+
+    erb :redirect, locals: { url: auth_request.authorization_endpoint, params: auth_request.parameters }
+  rescue Lti::Advantage::ValidationError => e
+    halt 400, "Validation Error: #{e.message}"
   end
 end
 
 # 2. Main Launch Endpoint (LTI Launch)
 post "/lti/launch" do
-  puts "Checking for ID Token..."
-  if params[:id_token].nil?
-    if params[:error]
-      halt 400, "LMS Error: #{params[:error]} - #{params[:error_description]}"
-    else
-      halt 400, "Missing id_token. Received params: #{params.keys.join(', ')}"
-    end
-  end
+  launch = LTI_CLIENT.validate_launch!(
+    id_token: params.fetch("id_token"),
+    state: params.fetch("state")
+  )
 
-  puts "Checking State..."
-  puts "Session State: #{session[:lti_state]}"
-  puts "Params State:  #{params[:state]}"
+  session[:nrps_memberships_url] = launch.context_memberships_url
+  session[:lti_deployment_id] = launch.deployment_id
 
-  # A. Security check: verify the state matches the session
-  if params[:state] != session[:lti_state]
-    puts "WARNING: State mismatch! (Expected in local HTTP testing). Continuing anyway..."
-    # halt 403, "Invalid State" # Temporarily disabled for local dev
+  launch_message = "Welcome, student! Your ID is: #{launch.subject || "anonymous"}. Launch successful!"
+  if launch.nrps_available?
+    "#{launch_message} NRPS memberships are available at /nrps/members."
+  else
+    "#{launch_message} This launch did not include the NRPS claim."
   end
-  
-  # B. Parse and verify the JWT (ID Token)
-  message = Lti::Advantage::Message.new(params[:id_token])
-
-  session[:nrps_memberships_url] = message.context_memberships_url
-  
-  # In a real scenario, you would fetch public keys from the LMS JWKS URL
-  # keys = Lti::Advantage::KeyStore.new("http://localhost:3000/api/lti/security/jwks").keys
-  keys = [] # TODO: Populate with real public keys from the LMS
-  
-  begin
-    # message.verify!(keys: keys, client_id: CLIENT_ID, issuer: LMS_ISSUER)
-    
-    # If verification passes, display welcome message
-    "Welcome, student! Your ID is: #{message.user_id}. Launch successful!"
-  rescue Lti::Advantage::Error => e
-    halt 401, "Verification Failed: #{e.message}"
-  end
+rescue KeyError
+  halt 400, "Missing id_token or state"
+rescue Lti::Advantage::ReplayError => e
+  halt 401, "Replay protection failed: #{e.message}"
+rescue Lti::Advantage::JwtVerificationError => e
+  halt 401, "JWT verification failed: #{e.message}"
+rescue Lti::Advantage::ValidationError => e
+  halt 400, "Launch validation failed: #{e.message}"
 end
 
+# rubocop:disable Metrics/BlockLength
 get "/nrps/members" do
   memberships_url = session[:nrps_memberships_url]
   halt 400, "No memberships URL in session. Complete an LTI launch first." unless memberships_url
 
+  limit = integer_param(:limit)
+  role = normalized_param(:role)
+  resource_link_id = normalized_param(:resource_link_id)
+
   token_service = Lti::Advantage::Services::AccessToken.new(
-    key_pair:       TOOL_KEY_PAIR,
-    client_id:      CLIENT_ID,
-    token_endpoint: LMS_TOKEN_ENDPOINT,
-    scope:          Lti::Advantage::Services::NamesRoleService::SCOPE
+    key_pair: TOOL_KEY_PAIR,
+    client_id: CLIENT_ID,
+    token_endpoint: LTI_REGISTRATION.token_endpoint,
+    scope: Lti::Advantage::Services::NamesRoleService::SCOPE,
+    deployment_id: session[:lti_deployment_id]
   )
 
   begin
@@ -132,25 +150,21 @@ get "/nrps/members" do
 
   nrps = Lti::Advantage::Services::NamesRoleService.new(
     memberships_url: memberships_url,
-    access_token:    access_token
+    access_token: access_token
   )
 
   begin
-    result = nrps.memberships(role: params[:role])
+    result = nrps.memberships(role: role, limit: limit, resource_link_id: resource_link_id)
   rescue Lti::Advantage::Error => e
     halt 500, "Failed to fetch memberships: #{e.message}"
   end
 
   content_type :json
-  {
-    context: result.context,
-    members: result.members.map { |m|
-      { user_id: m.user_id, name: m.name, email: m.email, roles: m.roles, status: m.status }
-    },
-    next_page_url:   result.next_page_url,
-    differences_url: result.differences_url
-  }.to_json
+  memberships_response_body(result).to_json
+rescue ArgumentError
+  halt 400, "limit must be an integer"
 end
+# rubocop:enable Metrics/BlockLength
 
 __END__
 

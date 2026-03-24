@@ -77,9 +77,11 @@ module Lti
       #
       # @param role [String] role URI or short name
       # @return [Boolean]
-      def has_role?(role)
+      def role?(role)
         @roles.any? { |r| r == role || r.end_with?("##{role}") }
       end
+
+      alias has_role? role?
 
       # @return [String]
       def inspect

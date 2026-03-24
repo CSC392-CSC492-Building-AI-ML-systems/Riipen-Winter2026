@@ -6,20 +6,20 @@ RSpec.describe Lti::Advantage::Launch do
   let(:nrps_claim_data) do
     {
       "context_memberships_url" => "https://lms.example.com/2344/memberships",
-      "service_versions"        => ["2.0"]
+      "service_versions" => ["2.0"]
     }
   end
 
   let(:payload_with_nrps) do
     {
       "sub" => "user-123",
-      Lti::Advantage::Claims::MESSAGE_TYPE    => "LtiResourceLinkRequest",
-      Lti::Advantage::Claims::VERSION         => "1.3.0",
-      Lti::Advantage::Claims::DEPLOYMENT_ID   => "deployment-123",
+      Lti::Advantage::Claims::MESSAGE_TYPE => "LtiResourceLinkRequest",
+      Lti::Advantage::Claims::VERSION => "1.3.0",
+      Lti::Advantage::Claims::DEPLOYMENT_ID => "deployment-123",
       Lti::Advantage::Claims::TARGET_LINK_URI => "https://tool.example/lti/launch",
-      Lti::Advantage::Claims::RESOURCE_LINK   => { "id" => "resource-42" },
-      Lti::Advantage::Claims::ROLES           => [],
-      Lti::Advantage::Launch::NRPS_CLAIM      => nrps_claim_data
+      Lti::Advantage::Claims::RESOURCE_LINK => { "id" => "resource-42" },
+      Lti::Advantage::Claims::ROLES => [],
+      Lti::Advantage::Launch::NRPS_CLAIM => nrps_claim_data
     }
   end
 

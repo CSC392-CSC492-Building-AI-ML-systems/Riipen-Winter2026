@@ -19,7 +19,8 @@ module Lti
       #     key_pair:       TOOL_KEY_PAIR,
       #     client_id:      CLIENT_ID,
       #     token_endpoint: "https://lms.example.com/login/oauth2/token",
-      #     scope:          Lti::Advantage::Services::NamesRoleService::SCOPE
+      #     scope:          Lti::Advantage::Services::NamesRoleService::SCOPE,
+      #     deployment_id:  launch.deployment_id
       #   )
       #   bearer = token_service.fetch
       class AccessToken
@@ -27,11 +28,14 @@ module Lti
         # @param client_id [String] the tool's Client ID registered in the LMS
         # @param token_endpoint [String] the LMS OAuth2 token URL
         # @param scope [String] space-separated list of OAuth2 scopes to request
-        def initialize(key_pair:, client_id:, token_endpoint:, scope:)
+        # @param deployment_id [String, nil] optional LTI deployment id to bind
+        #   the token request to a specific deployment
+        def initialize(key_pair:, client_id:, token_endpoint:, scope:, deployment_id: nil)
           @key_pair       = key_pair
-          @client_id      = client_id
-          @token_endpoint = token_endpoint
-          @scope          = scope
+          @client_id      = assert_presence("client_id", client_id)
+          @token_endpoint = assert_presence("token_endpoint", token_endpoint)
+          @scope          = assert_presence("scope", scope)
+          @deployment_id  = normalize_optional_string(deployment_id)
         end
 
         # Requests a bearer token from the LMS.
@@ -44,14 +48,14 @@ module Lti
             req.body = URI.encode_www_form(token_request_params)
           end
 
-          unless response.success?
-            raise Error, "Token request failed (#{response.status}): #{response.body}"
-          end
+          raise Error, "Token request failed (#{response.status}): #{response.body}" unless response.success?
 
-          parsed = JSON.parse(response.body)
+          parsed = parse_json_body(response.body)
           parsed["access_token"] or raise Error, "No access_token in response: #{response.body}"
         rescue Faraday::Error => e
           raise Error, "Network error fetching access token: #{e.message}"
+        rescue JSON::ParserError => e
+          raise Error, "Failed to parse access token response: #{e.message}"
         end
 
         private
@@ -60,10 +64,10 @@ module Lti
         # @return [Hash]
         def token_request_params
           {
-            grant_type:            "client_credentials",
+            grant_type: "client_credentials",
             client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-            client_assertion:      build_client_assertion,
-            scope:                 @scope
+            client_assertion: build_client_assertion,
+            scope: @scope
           }
         end
 
@@ -81,6 +85,7 @@ module Lti
             exp: now + 300, # 5 minutes
             jti: SecureRandom.uuid
           }
+          payload[Claims::DEPLOYMENT_ID] = @deployment_id if @deployment_id
 
           JWT.encode(
             payload,
@@ -88,6 +93,31 @@ module Lti
             "RS256",
             { kid: @key_pair.kid }
           )
+        end
+
+        def parse_json_body(body)
+          case body
+          when Hash
+            body
+          else
+            JSON.parse(body.to_s)
+          end
+        end
+
+        def assert_presence(name, value)
+          string_value = value.to_s.strip
+          raise ConfigurationError, "#{name} is required" if string_value.empty?
+
+          string_value
+        end
+
+        def normalize_optional_string(value)
+          return nil if value.nil?
+
+          string_value = value.to_s.strip
+          raise ConfigurationError, "deployment_id cannot be blank" if string_value.empty?
+
+          string_value
         end
       end
     end

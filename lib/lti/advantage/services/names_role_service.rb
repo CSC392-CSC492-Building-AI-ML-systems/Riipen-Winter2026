@@ -2,6 +2,7 @@
 
 require "faraday"
 require "json"
+require "uri"
 
 module Lti
   module Advantage
@@ -13,7 +14,7 @@ module Lti
       #
       # @example Fetch all members
       #   service = Lti::Advantage::Services::NamesRoleService.new(
-      #     memberships_url: message.context_memberships_url,
+      #     memberships_url: launch.context_memberships_url,
       #     access_token:    bearer_token
       #   )
       #   result = service.memberships
@@ -38,18 +39,16 @@ module Lti
         MEDIA_TYPE = "application/vnd.ims.lti-nrps.v2.membershipcontainer+json"
 
         # Simple value object returned by every #memberships call.
-        #
-        # @!attribute [r] context
-        #   @return [Hash] the context object (+id+, +label+, +title+)
-        # @!attribute [r] members
-        #   @return [Array<Lti::Advantage::Membership>]
-        # @!attribute [r] next_page_url
-        #   @return [String, nil] URL for the next page of results (pagination)
-        # @!attribute [r] differences_url
-        #   @return [String, nil] URL to fetch membership differences since this
-        #     response was generated
-        MembershipsResult = Struct.new(:context, :members, :next_page_url, :differences_url,
-                                       keyword_init: true)
+        class MembershipsResult
+          attr_reader :context, :members, :next_page_url, :differences_url
+
+          def initialize(context:, members:, next_page_url:, differences_url:)
+            @context = context
+            @members = members
+            @next_page_url = next_page_url
+            @differences_url = differences_url
+          end
+        end
 
         # @param memberships_url [String] the +context_memberships_url+ from the
         #   NRPS launch claim
@@ -75,10 +74,7 @@ module Lti
           params[:limit] = limit if limit
           params[:rlid]  = resource_link_id if resource_link_id
 
-          url = @memberships_url
-          url = "#{url}?#{URI.encode_www_form(params)}" unless params.empty?
-
-          memberships_from_url(url)
+          memberships_from_url(build_memberships_url(@memberships_url, params))
         end
 
         # Fetches a page of memberships from an arbitrary URL.  Use this for
@@ -94,9 +90,7 @@ module Lti
             req.headers["Accept"]        = MEDIA_TYPE
           end
 
-          unless response.success?
-            raise Error, "NRPS request failed (#{response.status}): #{response.body}"
-          end
+          raise Error, "NRPS request failed (#{response.status}): #{response.body}" unless response.success?
 
           parse_response(response)
         rescue Faraday::Error => e
@@ -108,12 +102,12 @@ module Lti
         #
         # @param role [String, nil] role filter forwarded to each page request
         # @return [Array<Lti::Advantage::Membership>]
-        def all_members(role: nil)
-          result  = memberships(role: role)
+        def all_members(role: nil, limit: nil, resource_link_id: nil)
+          result  = memberships(role: role, limit: limit, resource_link_id: resource_link_id)
           members = result.members.dup
 
           while result.next_page_url
-            result  = memberships_from_url(result.next_page_url)
+            result = memberships_from_url(result.next_page_url)
             members.concat(result.members)
           end
 
@@ -127,16 +121,16 @@ module Lti
         # @param response [Faraday::Response]
         # @return [MembershipsResult]
         def parse_response(response)
-          body = JSON.parse(response.body)
+          body = parse_json_body(response.body)
 
           members = Array(body["members"]).map do |raw|
             Membership.new(raw)
           end
 
           MembershipsResult.new(
-            context:         body["context"],
-            members:         members,
-            next_page_url:   extract_link(response.headers["link"], "next"),
+            context: body["context"],
+            members: members,
+            next_page_url: extract_link(response.headers["link"], "next"),
             differences_url: extract_link(response.headers["link"], "differences")
           )
         rescue JSON::ParserError => e
@@ -164,6 +158,29 @@ module Lti
           end
 
           nil
+        end
+
+        def build_memberships_url(url, params)
+          return url if params.empty?
+
+          uri = URI.parse(url)
+          existing_params = URI.decode_www_form(uri.query.to_s)
+          params.each do |key, value|
+            existing_params << [key.to_s, value.to_s]
+          end
+          uri.query = URI.encode_www_form(existing_params)
+          uri.to_s
+        rescue URI::InvalidURIError => e
+          raise Error, "Invalid memberships URL: #{e.message}"
+        end
+
+        def parse_json_body(body)
+          case body
+          when Hash
+            body
+          else
+            JSON.parse(body.to_s)
+          end
         end
       end
     end

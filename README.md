@@ -1,6 +1,6 @@
 # Lti::Advantage
 
-`lti-advantage` provides a focused implementation of the LTI 1.3 core launch flow for Ruby applications.
+`lti-advantage` provides a focused implementation of the LTI 1.3 core launch flow for Ruby applications, with initial support for LTI Advantage NRPS roster access.
 
 Implemented core behaviors:
 
@@ -9,6 +9,9 @@ Implemented core behaviors:
 - Validate signed `id_token` launch messages against platform JWKS
 - Enforce required LTI 1.3 resource link claims
 - Protect against replay attacks with one-time `state` and `nonce` values
+- Read the NRPS claim from a validated launch
+- Request OAuth access tokens for LTI services with JWT client assertions
+- Fetch course memberships through the NRPS v2 memberships endpoint
 
 ## Installation
 
@@ -34,6 +37,7 @@ registration = Lti::Advantage::Registration.new(
   client_id: "client-123",
   authorization_endpoint: "https://platform.example/oidc/auth",
   jwks_url: "https://platform.example/.well-known/jwks.json",
+  token_endpoint: "https://platform.example/login/oauth2/token",
   deployment_ids: ["deployment-123"]
 )
 
@@ -81,9 +85,35 @@ Validation includes:
 
 Anonymous launches are supported (`sub` may be omitted).
 
+### 3) Access NRPS memberships
+
+```ruby
+return unless launch.nrps_available?
+
+access_token = Lti::Advantage::Services::AccessToken.new(
+  key_pair: TOOL_KEY_PAIR,
+  client_id: launch.registration.client_id,
+  token_endpoint: launch.registration.token_endpoint,
+  scope: Lti::Advantage::Services::NamesRoleService::SCOPE,
+  deployment_id: launch.deployment_id
+).fetch
+
+memberships = Lti::Advantage::Services::NamesRoleService.new(
+  memberships_url: launch.context_memberships_url,
+  access_token: access_token
+)
+
+result = memberships.memberships(role: "Learner", limit: 50)
+result.members.each do |member|
+  puts [member.user_id, member.name, member.roles].inspect
+end
+```
+
+`AccessToken` uses the platform token endpoint configured on the selected `Registration`, and `NamesRoleService` can follow `next_page_url` or `differences_url` links exposed by the LMS.
+
 ## Demo app and tool JWKS
 
-The Sinatra demo in `demo/app.rb` uses the new `Client` flow for login and launch validation while keeping `Lti::Advantage::KeyPair` to publish the tool's public key at `/lti/jwks`.
+The Sinatra demo in `demo/app.rb` uses the `Client` flow for login and launch validation, stores the NRPS memberships URL only after a successful launch, and then exchanges a JWT client assertion for an NRPS access token before calling the memberships endpoint.
 
 ## API Documentation (RDoc)
 

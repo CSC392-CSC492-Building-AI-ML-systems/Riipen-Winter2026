@@ -5,16 +5,16 @@ require "spec_helper"
 RSpec.describe Lti::Advantage::Membership do
   let(:raw_member) do
     {
-      "user_id"              => "0ae836b9-7fc9-4060-006f-27b2066ac545",
-      "status"               => "Active",
-      "name"                 => "Jane Q. Public",
-      "picture"              => "https://platform.example.edu/jane.jpg",
-      "given_name"           => "Jane",
-      "family_name"          => "Doe",
-      "middle_name"          => "Marie",
-      "email"                => "jane@platform.example.edu",
+      "user_id" => "0ae836b9-7fc9-4060-006f-27b2066ac545",
+      "status" => "Active",
+      "name" => "Jane Q. Public",
+      "picture" => "https://platform.example.edu/jane.jpg",
+      "given_name" => "Jane",
+      "family_name" => "Doe",
+      "middle_name" => "Marie",
+      "email" => "jane@platform.example.edu",
       "lis_person_sourcedid" => "59254-6782-12ab",
-      "roles"                => [
+      "roles" => [
         "http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor"
       ]
     }

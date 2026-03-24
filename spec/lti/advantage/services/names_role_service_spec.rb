@@ -1,29 +1,19 @@
 # frozen_string_literal: true
 
-require "spec_helper"
-
 RSpec.describe Lti::Advantage::Services::NamesRoleService do
   let(:memberships_url) { "https://lms.example.com/sections/2923/memberships" }
-  let(:access_token)    { "test-bearer-token-abc123" }
+  let(:access_token) { "test-bearer-token-abc123" }
 
   subject do
     described_class.new(
       memberships_url: memberships_url,
-      access_token:    access_token
+      access_token: access_token
     )
-  end
-
-  # ── helpers ──────────────────────────────────────────────────────────────────
-
-  def stub_memberships(url: memberships_url, body:, headers: {}, status: 200)
-    stubs = Faraday::Adapter::Test::Stubs.new
-    stubs.get(URI.parse(url).path) { [status, headers, body.to_json] }
-    stubs
   end
 
   def build_membership_body(members: [], context: nil)
     {
-      "id"      => memberships_url,
+      "id" => memberships_url,
       "context" => context || { "id" => "ctx-1", "label" => "CPS 435", "title" => "CPS 435 Analytics" },
       "members" => members
     }
@@ -31,24 +21,22 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
 
   def jane_member
     {
-      "user_id"    => "user-jane",
-      "status"     => "Active",
-      "name"       => "Jane Doe",
+      "user_id" => "user-jane",
+      "status" => "Active",
+      "name" => "Jane Doe",
       "given_name" => "Jane",
-      "email"      => "jane@example.edu",
-      "roles"      => ["http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor"]
+      "email" => "jane@example.edu",
+      "roles" => ["http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor"]
     }
   end
 
   def bob_member
     {
       "user_id" => "user-bob",
-      "status"  => "Active",
-      "roles"   => ["http://purl.imsglobal.org/vocab/lis/v2/membership#Learner"]
+      "status" => "Active",
+      "roles" => ["http://purl.imsglobal.org/vocab/lis/v2/membership#Learner"]
     }
   end
-
-  # ── constants ────────────────────────────────────────────────────────────────
 
   describe "SCOPE" do
     it "is the correct NRPS readonly scope" do
@@ -66,86 +54,88 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
     end
   end
 
-  # ── #memberships ─────────────────────────────────────────────────────────────
-
   describe "#memberships" do
-    it "returns a MembershipsResult with parsed members" do
-      body = build_membership_body(members: [jane_member, bob_member])
-
-      allow(Faraday).to receive(:get).and_yield(
-        double("req", headers: {})
-      ).and_return(
-        double("resp", success?: true, body: body.to_json,
-                       headers: { "link" => nil })
-      )
-
-      # Use real Faraday via allow/receive for simplicity in isolation tests
-      response_double = double("resp",
+    it "sends authorization headers and returns parsed members" do
+      captured_headers = nil
+      response_double = double(
+        "resp",
         success?: true,
-        body: body.to_json,
-        headers: { "link" => "" }
+        body: build_membership_body(members: [jane_member, bob_member]).to_json,
+        headers: { "link" => nil }
       )
-      allow(Faraday).to receive(:get).and_return(response_double)
+
+      allow(Faraday).to receive(:get) do |_url, &block|
+        headers = {}
+        request = double("req")
+        allow(request).to receive(:headers).and_return(headers)
+        block.call(request)
+        captured_headers = headers
+        response_double
+      end
 
       result = subject.memberships
-      expect(result).to be_a(Lti::Advantage::Services::NamesRoleService::MembershipsResult)
+
+      expect(captured_headers).to include(
+        "Authorization" => "Bearer #{access_token}",
+        "Accept" => described_class::MEDIA_TYPE
+      )
+      expect(result).to be_a(described_class::MembershipsResult)
       expect(result.members.length).to eq(2)
       expect(result.members.first).to be_a(Lti::Advantage::Membership)
       expect(result.members.first.user_id).to eq("user-jane")
     end
 
-    it "passes the role query param when filtering" do
+    it "passes role, limit, and rlid query params" do
       captured_url = nil
-      response_double = double("resp",
+      response_double = double(
+        "resp",
         success?: true,
         body: build_membership_body(members: [jane_member]).to_json,
         headers: { "link" => "" }
       )
+
       allow(Faraday).to receive(:get) do |url, &_block|
         captured_url = url
         response_double
       end
 
-      subject.memberships(role: "Instructor")
+      subject.memberships(role: "Instructor", limit: 10, resource_link_id: "link-99")
+
       expect(captured_url).to include("role=Instructor")
-    end
-
-    it "passes the limit query param" do
-      captured_url = nil
-      response_double = double("resp",
-        success?: true,
-        body: build_membership_body.to_json,
-        headers: { "link" => "" }
-      )
-      allow(Faraday).to receive(:get) do |url, &_block|
-        captured_url = url
-        response_double
-      end
-
-      subject.memberships(limit: 10)
       expect(captured_url).to include("limit=10")
+      expect(captured_url).to include("rlid=link-99")
     end
 
-    it "passes the rlid query param for resource link scope" do
+    it "merges query params with an existing memberships URL query string" do
+      service = described_class.new(
+        memberships_url: "https://lms.example.com/sections/2923/memberships?context_id=abc",
+        access_token: access_token
+      )
       captured_url = nil
-      response_double = double("resp",
+      response_double = double(
+        "resp",
         success?: true,
         body: build_membership_body.to_json,
         headers: { "link" => "" }
       )
+
       allow(Faraday).to receive(:get) do |url, &_block|
         captured_url = url
         response_double
       end
 
-      subject.memberships(resource_link_id: "link-99")
-      expect(captured_url).to include("rlid=link-99")
+      service.memberships(limit: 25)
+
+      expect(captured_url).to include("context_id=abc")
+      expect(captured_url).to include("limit=25")
+      expect(captured_url.scan("?").length).to eq(1)
     end
 
     it "raises an Error on a non-200 response" do
       allow(Faraday).to receive(:get).and_return(
         double("resp", success?: false, status: 401, body: "Unauthorized")
       )
+
       expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /401/)
     end
 
@@ -153,16 +143,16 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
       allow(Faraday).to receive(:get).and_return(
         double("resp", success?: true, body: "not json", headers: { "link" => "" })
       )
+
       expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /parse/)
     end
   end
 
-  # ── pagination ────────────────────────────────────────────────────────────────
-
   describe "pagination via next_page_url" do
     it "exposes the next_page_url from the Link header" do
       next_url = "#{memberships_url}?p=2"
-      response_double = double("resp",
+      response_double = double(
+        "resp",
         success?: true,
         body: build_membership_body(members: [jane_member]).to_json,
         headers: { "link" => "<#{next_url}>; rel=\"next\"" }
@@ -174,7 +164,8 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
     end
 
     it "returns nil next_page_url when there are no more pages" do
-      response_double = double("resp",
+      response_double = double(
+        "resp",
         success?: true,
         body: build_membership_body(members: [jane_member]).to_json,
         headers: { "link" => "" }
@@ -187,7 +178,8 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
 
     it "exposes the differences_url from the Link header" do
       diff_url = "#{memberships_url}?since=1422554502"
-      response_double = double("resp",
+      response_double = double(
+        "resp",
         success?: true,
         body: build_membership_body.to_json,
         headers: { "link" => "<#{diff_url}>; rel=\"differences\"" }
@@ -199,18 +191,18 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
     end
   end
 
-  # ── #all_members ─────────────────────────────────────────────────────────────
-
   describe "#all_members" do
     it "collects members across multiple pages" do
       page2_url = "#{memberships_url}?p=2"
 
-      page1_resp = double("resp1",
+      page1_resp = double(
+        "resp1",
         success?: true,
         body: build_membership_body(members: [jane_member]).to_json,
         headers: { "link" => "<#{page2_url}>; rel=\"next\"" }
       )
-      page2_resp = double("resp2",
+      page2_resp = double(
+        "resp2",
         success?: true,
         body: build_membership_body(members: [bob_member]).to_json,
         headers: { "link" => "" }
@@ -223,8 +215,30 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
       end
 
       members = subject.all_members
+
       expect(members.length).to eq(2)
       expect(members.map(&:user_id)).to match_array(%w[user-jane user-bob])
+    end
+
+    it "passes optional filters to the initial page request" do
+      captured_url = nil
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body(members: [jane_member]).to_json,
+        headers: { "link" => "" }
+      )
+
+      allow(Faraday).to receive(:get) do |url, &_block|
+        captured_url = url
+        response_double
+      end
+
+      subject.all_members(role: "Instructor", limit: 20, resource_link_id: "link-99")
+
+      expect(captured_url).to include("role=Instructor")
+      expect(captured_url).to include("limit=20")
+      expect(captured_url).to include("rlid=link-99")
     end
   end
 end
