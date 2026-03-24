@@ -8,7 +8,9 @@ module Lti
       class Endpoint
         SCORE_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/score"
         LINEITEM_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/lineitem"
-        RESULT_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/result.readonly"
+        LINEITEM_READONLY_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/lineitem.readonly"
+        RESULT_READONLY_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/result.readonly"
+        RESULT_SCOPE = RESULT_READONLY_SCOPE
 
         attr_reader :lineitems_url, :lineitem_url, :scopes
 
@@ -37,35 +39,65 @@ module Lti
           require_scope!(SCORE_SCOPE)
 
           base = resolve_line_item_url(line_item_url)
-          uri = URI.parse(base)
-          uri.path = "#{uri.path.sub(%r{/$}, "")}/scores"
-          uri.query = nil if uri.query == ""
-          uri.to_s
+          append_member_suffix(base, "/scores")
         end
 
-        # build the results url
         def results_url(line_item_url: nil)
-          require_scope!(RESULT_SCOPE)
+          require_scope!(RESULT_READONLY_SCOPE)
 
           base = resolve_line_item_url(line_item_url)
-          uri = URI.parse(base)
-          # no double append of /results
-          unless uri.path.end_with?("/results")
-            uri.path = "#{uri.path.sub(%r{/$}, "")}/results"
-          end
-          if uri.query == ""
-            uri.query = nil
-          end
-          uri.to_s
+          append_member_suffix(base, "/results")
+        end
+
+        def line_item_url
+          lineitem_url
+        end
+
+        def lineitems_url!(lineitems_url: nil, write: false)
+          require_line_item_scope!(write: write)
+
+          candidate = optional_string(lineitems_url) || @lineitems_url
+          return candidate unless candidate.nil?
+
+          raise ValidationError, "An AGS lineitems URL is required for line item collection operations"
+        end
+
+        def line_item_url!(line_item_url: nil, write: false)
+          require_line_item_scope!(write: write)
+          resolve_line_item_url(line_item_url, purpose: "line item operations")
         end
 
         private
 
-        def resolve_line_item_url(explicit_line_item_url)
+        def require_line_item_scope!(write:)
+          if write
+            require_scope!(LINEITEM_SCOPE)
+          elsif supports_scope?(LINEITEM_SCOPE) || supports_scope?(LINEITEM_READONLY_SCOPE)
+            nil
+          else
+            raise AuthorizationError,
+                  "AGS scope #{LINEITEM_SCOPE} or #{LINEITEM_READONLY_SCOPE} is not granted for this launch"
+          end
+        end
+
+        def resolve_line_item_url(explicit_line_item_url, purpose: "score publishing")
           candidate = optional_string(explicit_line_item_url) || lineitem_url
           return candidate unless candidate.nil?
 
-          raise ValidationError, "A concrete AGS lineitem URL is required for score publishing"
+          raise ValidationError, "A concrete AGS lineitem URL is required for #{purpose}"
+        end
+
+        def append_member_suffix(base, suffix)
+          uri = URI.parse(base)
+          normalized_suffix = suffix.sub(%r{^/+}, "")
+          current_segments = uri.path.split("/").reject(&:empty?)
+
+          unless current_segments.last == normalized_suffix
+            uri.path = "/#{(current_segments + [normalized_suffix]).join("/")}"
+          end
+
+          uri.query = nil if uri.query == ""
+          uri.to_s
         end
 
         def optional_string(value)

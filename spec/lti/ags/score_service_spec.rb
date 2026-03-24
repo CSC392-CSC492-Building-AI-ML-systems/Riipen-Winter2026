@@ -2,9 +2,9 @@
 
 require "uri"
 
-RSpec.describe Lti::Advantage::AGS::ScoreService do
-  Response = Struct.new(:code, :body)
+ScoreServiceResponse = Struct.new(:code, :body)
 
+RSpec.describe Lti::Advantage::AGS::ScoreService do
   let(:registration) do
     Lti::Advantage::Registration.new(
       issuer: "https://platform.example",
@@ -37,11 +37,11 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
 
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ScoreServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/scores"
-        Response.new("201", "")
+        ScoreServiceResponse.new("201", "")
       else
-        Response.new("404", "not found")
+        ScoreServiceResponse.new("404", "not found")
       end
     end
   end
@@ -96,6 +96,24 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
   end
 
   it "reuses the cached access token for repeated score publishes" do
+    first_score_payload = {
+      user_id: "user-123",
+      timestamp: "2026-03-11T20:10:06.123Z",
+      activity_progress: "Completed",
+      grading_progress: "FullyGraded",
+      score_given: 9,
+      score_maximum: 10
+    }
+    second_score_payload = first_score_payload.merge(timestamp: "2026-03-11T20:10:07.123Z")
+
+    score_service.publish(score: first_score_payload)
+    score_service.publish(score: second_score_payload)
+
+    token_requests = requests.count { |request| request[:url] == "https://platform.example/oauth2/token" }
+    expect(token_requests).to eq(1)
+  end
+
+  it "allows repeated score publishes with the same timestamp" do
     score_payload = {
       user_id: "user-123",
       timestamp: "2026-03-11T20:10:06.123Z",
@@ -106,10 +124,33 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
     }
 
     score_service.publish(score: score_payload)
-    score_service.publish(score: score_payload)
+    expect { score_service.publish(score: score_payload) }.not_to raise_error
+  end
 
-    token_requests = requests.count { |request| request[:url] == "https://platform.example/oauth2/token" }
-    expect(token_requests).to eq(1)
+  it "allows out-of-order score publishes and delegates ordering rules to the platform" do
+    score_service.publish(
+      score: {
+        user_id: "user-123",
+        timestamp: "2026-03-11T20:10:07.123Z",
+        activity_progress: "Completed",
+        grading_progress: "FullyGraded",
+        score_given: 9,
+        score_maximum: 10
+      }
+    )
+
+    expect do
+      score_service.publish(
+        score: {
+          user_id: "user-123",
+          timestamp: "2026-03-11T20:10:06.123Z",
+          activity_progress: "Completed",
+          grading_progress: "FullyGraded",
+          score_given: 8,
+          score_maximum: 10
+        }
+      )
+    end.not_to raise_error
   end
 
   it "raises when the launch is missing score scope" do

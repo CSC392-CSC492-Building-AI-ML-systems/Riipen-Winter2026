@@ -2,15 +2,15 @@
 
 require "uri"
 
-RSpec.describe Lti::Advantage::AGS::ResultService do
-  Response = Struct.new(:code, :body)
-  ResponseWithLink = Struct.new(:code, :body, :link_header, :content_type) do
-    def initialize(code, body, link_header, content_type = Lti::Advantage::AGS::ResultService::RESULT_CONTAINER_TYPE)
-      super(code, body, link_header, content_type)
-    end
+ResultServiceResponse = Struct.new(:code, :body)
+ResultServiceResponseWithLink = Struct.new(:code, :body, :link_header, :content_type) do
+  def initialize(code, body, link_header, content_type = Lti::Advantage::AGS::ResultService::RESULT_CONTAINER_TYPE)
+    super(code, body, link_header, content_type)
   end
-  ResponseWithLinkAndType = Struct.new(:code, :body, :link_header, :content_type)
+end
+ResultServiceResponseWithLinkAndType = Struct.new(:code, :body, :link_header, :content_type)
 
+RSpec.describe Lti::Advantage::AGS::ResultService do
   let(:registration) do
     Lti::Advantage::Registration.new(
       issuer: "https://platform.example",
@@ -45,9 +45,11 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
 
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200",
+                                  { access_token: "token-123", token_type: "Bearer",
+                                    expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -63,7 +65,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           nil
         )
       when "https://platform.example/line_items/42/results?foo=bar&user_id=user-1&limit=1"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -71,13 +73,12 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
               "scoreOf" => "https://platform.example/line_items/42",
               "userId" => "user-1",
               "resultScore" => 0.5
-              # resultMaximum omitted -> default 1
             }
           ].to_json,
           nil
         )
       when "https://platform.example/line_items/42/results?foo=bar&limit=1"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -90,7 +91,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           %(<https://platform.example/line_items/42/results?page=2>; rel="next")
         )
       when "https://platform.example/line_items/42/results?page=2"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -103,7 +104,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           nil
         )
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
   end
@@ -177,11 +178,11 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar&user_id=user-missing"
-        ResponseWithLink.new("200", [].to_json, nil)
+        ResultServiceResponseWithLink.new("200", [].to_json, nil)
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -238,11 +239,11 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        ResponseWithLink.new("200", "", nil)
+        ResultServiceResponseWithLink.new("200", "", nil)
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -256,16 +257,16 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
     expect(results).to eq([])
   end
 
-  it "treats a non-array JSON response as empty (container must be an array)" do
+  it "raises when the result container response is not an array" do
     object_body_http = lambda do |method:, url:, headers:, body: nil|
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        ResponseWithLink.new("200", { "unexpected" => true }.to_json, nil)
+        ResultServiceResponseWithLink.new("200", { "unexpected" => true }.to_json, nil)
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -275,8 +276,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       http_request: object_body_http
     )
 
-    results = described_class.new(service_client: object_body_client).list
-    expect(results).to eq([])
+    expect do
+      described_class.new(service_client: object_body_client).list
+    end.to raise_error(Lti::Advantage::ServiceError, /JSON array/)
   end
 
   it "raises when user_id filtering returns more than one result" do
@@ -284,9 +286,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar&user_id=user-1"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -305,7 +307,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           nil
         )
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -325,9 +327,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar&limit=1"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -340,7 +342,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           %(<https://platform.example/line_items/42/results?page=2>; rel='next')
         )
       when "https://platform.example/line_items/42/results?page=2"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -353,7 +355,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           nil
         )
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -372,9 +374,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar&limit=1"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -384,10 +386,13 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
               "resultScore" => 0.1
             }
           ].to_json,
-          %(<https://platform.example/line_items/42/results?page=3>; rel="last", <https://platform.example/line_items/42/results?page=2>; rel="next")
+          [
+            '<https://platform.example/line_items/42/results?page=3>; rel="last"',
+            '<https://platform.example/line_items/42/results?page=2>; rel="next"'
+          ].join(", ")
         )
       when "https://platform.example/line_items/42/results?page=2"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -400,7 +405,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           nil
         )
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -419,9 +424,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar&limit=1"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -434,9 +439,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           %(<https://platform.example/line_items/42/results?page=2>; rel="next"; title="page, two")
         )
       when "https://platform.example/line_items/42/results?page=2"
-        ResponseWithLink.new("200", [].to_json, nil)
+        ResultServiceResponseWithLink.new("200", [].to_json, nil)
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -466,11 +471,11 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        ResponseWithLink.new("200", [].to_json, nil)
+        ResultServiceResponseWithLink.new("200", [].to_json, nil)
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -501,9 +506,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar&baz=qux&user_id=user-1&limit=1"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -516,7 +521,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           nil
         )
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -536,11 +541,11 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        Response.new("403", "forbidden")
+        ResultServiceResponse.new("403", "forbidden")
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -560,11 +565,11 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        Response.new("500", "oops")
+        ResultServiceResponse.new("500", "oops")
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -584,11 +589,11 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        Response.new("400", "bad request")
+        ResultServiceResponse.new("400", "bad request")
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -608,11 +613,11 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        Response.new("401", "unauthorized")
+        ResultServiceResponse.new("401", "unauthorized")
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -632,11 +637,11 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -656,16 +661,16 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        ResponseWithLinkAndType.new(
+        ResultServiceResponseWithLinkAndType.new(
           "200",
           [].to_json,
           nil,
           "application/json"
         )
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -685,9 +690,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        ResponseWithLinkAndType.new(
+        ResultServiceResponseWithLinkAndType.new(
           "200",
           [
             {
@@ -701,7 +706,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           "#{described_class::RESULT_CONTAINER_TYPE}; charset=utf-8"
         )
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -722,11 +727,11 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        ResponseWithLinkAndType.new("200", [].to_json, nil, nil)
+        ResultServiceResponseWithLinkAndType.new("200", [].to_json, nil, nil)
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -746,9 +751,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -761,7 +766,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           nil
         )
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -781,9 +786,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -796,7 +801,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           nil
         )
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -816,11 +821,11 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar"
-        ResponseWithLink.new("200", [].to_json, "   ")
+        ResultServiceResponseWithLink.new("200", [].to_json, "   ")
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -839,9 +844,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar&limit=1"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -854,9 +859,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           %(<https://platform.example/line_items/42/results?page=2>; rel="NEXT")
         )
       when "https://platform.example/line_items/42/results?page=2"
-        ResponseWithLink.new("200", [].to_json, nil)
+        ResultServiceResponseWithLink.new("200", [].to_json, nil)
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -875,9 +880,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/paginated/results?page=2"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -890,7 +895,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           nil
         )
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -913,9 +918,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/777/results?foo=bar"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -928,7 +933,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           nil
         )
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 
@@ -953,9 +958,9 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       requests << { method: method, url: url, headers: headers, body: body }
       case url
       when "https://platform.example/oauth2/token"
-        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar&limit=1"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -968,7 +973,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           %(<https://platform.example/line_items/42/results?page=2>; rel="next")
         )
       when "https://platform.example/line_items/42/results?page=2"
-        ResponseWithLink.new(
+        ResultServiceResponseWithLink.new(
           "200",
           [
             {
@@ -981,7 +986,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
           %(<https://platform.example/line_items/42/results?page=2>; rel="next")
         )
       else
-        Response.new("404", "not found")
+        ResultServiceResponse.new("404", "not found")
       end
     end
 

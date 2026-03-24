@@ -34,6 +34,10 @@ module Lti
           ResultService.new(service_client: self)
         end
 
+        def line_item_service
+          LineItemService.new(service_client: self)
+        end
+
         def get_json(url:, accept:, scopes:)
           response = request(
             method: :get,
@@ -48,8 +52,6 @@ module Lti
           JSON.parse(body)
         end
 
-        # GET request that returns both parsed JSON body and the raw response for header inspection.
-        # Use this when the client needs to read headers (Link for pagination).
         def get_json_with_headers(url:, accept:, scopes:)
           response = request(
             method: :get,
@@ -57,7 +59,7 @@ module Lti
             scopes: scopes,
             headers: { "Accept" => accept }
           )
-          
+
           body = response.body.to_s.strip
           data = body.empty? ? [] : JSON.parse(body)
           link_header = read_link_header(response)
@@ -66,7 +68,7 @@ module Lti
         end
 
         def post_json(url:, body:, content_type:, accept:, scopes:)
-          response = request(
+          request(
             method: :post,
             url: url,
             body: JSON.generate(body),
@@ -76,9 +78,19 @@ module Lti
               "Accept" => accept
             }
           )
+        end
 
-          validate_service_response!(response, success_codes: [200, 201])
-          response
+        def put_json(url:, body:, content_type:, accept:, scopes:)
+          request(
+            method: :put,
+            url: url,
+            body: JSON.generate(body),
+            scopes: scopes,
+            headers: {
+              "Content-Type" => content_type,
+              "Accept" => accept
+            }
+          )
         end
 
         def request(method:, url:, scopes:, headers: {}, body: nil)
@@ -96,7 +108,11 @@ module Lti
         def access_token(scopes)
           token_scopes = Array(scopes).map(&:to_s).sort.freeze
           raise ConfigurationError, "AGS endpoint claim is missing from this launch" if endpoint.nil?
-          raise ConfigurationError, "Registration token_endpoint is required for AGS" if registration.token_endpoint.nil?
+
+          if registration.token_endpoint.nil?
+            raise ConfigurationError,
+                  "Registration token_endpoint is required for AGS"
+          end
 
           token_scopes.each { |scope| endpoint.require_scope!(scope) }
 
@@ -222,6 +238,8 @@ module Lti
           request_class = case method.to_sym
                           when :get then Net::HTTP::Get
                           when :post then Net::HTTP::Post
+                          when :put then Net::HTTP::Put
+                          when :delete then Net::HTTP::Delete
                           else
                             raise ArgumentError, "Unsupported HTTP method: #{method}"
                           end

@@ -70,7 +70,7 @@ RSpec.describe Lti::Advantage::AGS::Result do
       end.to raise_error(Lti::Advantage::ValidationError, /resultScore must be numeric/)
     end
 
-    it "defaults resultMaximum to 1 when omitted or non-positive" do
+    it "defaults resultMaximum to 1 when omitted" do
       omitted = described_class.from_json(
         {
           "id" => "https://platform.example/line_items/42/results/1",
@@ -80,28 +80,20 @@ RSpec.describe Lti::Advantage::AGS::Result do
         }
       )
       expect(omitted.result_maximum).to eq(1)
+    end
 
-      zero = described_class.from_json(
-        {
-          "id" => "https://platform.example/line_items/42/results/2",
-          "userId" => "user-1",
-          "scoreOf" => "https://platform.example/line_items/42",
-          "resultScore" => 0.8,
-          "resultMaximum" => 0
-        }
-      )
-      expect(zero.result_maximum).to eq(1)
-
-      negative = described_class.from_json(
-        {
-          "id" => "https://platform.example/line_items/42/results/3",
-          "userId" => "user-1",
-          "scoreOf" => "https://platform.example/line_items/42",
-          "resultScore" => 0.8,
-          "resultMaximum" => -2
-        }
-      )
-      expect(negative.result_maximum).to eq(1)
+    it "rejects non-positive resultMaximum values" do
+      expect do
+        described_class.from_json(
+          {
+            "id" => "https://platform.example/line_items/42/results/2",
+            "userId" => "user-1",
+            "scoreOf" => "https://platform.example/line_items/42",
+            "resultScore" => 0.8,
+            "resultMaximum" => 0
+          }
+        )
+      end.to raise_error(Lti::Advantage::ValidationError, /resultMaximum must be greater than zero/)
     end
 
     it "treats optional string fields as nil when blank" do
@@ -135,17 +127,18 @@ RSpec.describe Lti::Advantage::AGS::Result do
       expect(result.result_score).to be_nil
     end
 
-    it "defaults resultMaximum to 1 when it is non-numeric" do
-      result = described_class.from_json(
-        {
-          "id" => "https://platform.example/line_items/42/results/1",
-          "userId" => "user-1",
-          "scoreOf" => "https://platform.example/line_items/42",
-          "resultScore" => 0.7,
-          "resultMaximum" => "10"
-        }
-      )
-      expect(result.result_maximum).to eq(1)
+    it "rejects non-numeric resultMaximum values" do
+      expect do
+        described_class.from_json(
+          {
+            "id" => "https://platform.example/line_items/42/results/1",
+            "userId" => "user-1",
+            "scoreOf" => "https://platform.example/line_items/42",
+            "resultScore" => 0.7,
+            "resultMaximum" => "10"
+          }
+        )
+      end.to raise_error(Lti::Advantage::ValidationError, /resultMaximum must be numeric/)
     end
 
     it "keeps a positive resultMaximum value as-is" do
@@ -212,6 +205,4 @@ RSpec.describe Lti::Advantage::AGS::Result do
       end.to raise_error(Lti::Advantage::ValidationError, /scoreOf must be a URL string/)
     end
   end
-
 end
-

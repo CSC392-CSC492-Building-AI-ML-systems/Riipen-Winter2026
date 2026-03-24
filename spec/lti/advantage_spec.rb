@@ -13,8 +13,10 @@ RSpec.describe Lti::Advantage do
     expect(defined?(Lti::Advantage::KeyPair)).to eq("constant")
   end
 
-  it "exposes AGS score publishing primitives" do
+  it "exposes AGS score and line item primitives" do
     expect(defined?(Lti::Advantage::AGS::Endpoint)).to eq("constant")
+    expect(defined?(Lti::Advantage::AGS::LineItem)).to eq("constant")
+    expect(defined?(Lti::Advantage::AGS::LineItemService)).to eq("constant")
     expect(defined?(Lti::Advantage::AGS::ScoreService)).to eq("constant")
   end
 end
