@@ -49,8 +49,7 @@ module Lti
         end
 
         # GET request that returns both parsed JSON body and the raw response for header inspection.
-        # Use this when the client needs to read headers (e.g. Link for pagination).
-        # @return [Hash] { data: parsed_json, link_header: String|nil }
+        # Use this when the client needs to read headers (Link for pagination).
         def get_json_with_headers(url:, accept:, scopes:)
           response = request(
             method: :get,
@@ -58,11 +57,12 @@ module Lti
             scopes: scopes,
             headers: { "Accept" => accept }
           )
-
+          
           body = response.body.to_s.strip
           data = body.empty? ? [] : JSON.parse(body)
           link_header = read_link_header(response)
-          { data: data, link_header: link_header }
+          content_type = read_content_type(response)
+          { data: data, link_header: link_header, content_type: content_type }
         end
 
         def post_json(url:, body:, content_type:, accept:, scopes:)
@@ -183,7 +183,15 @@ module Lti
 
           nil
         rescue NameError
-          # Struct (e.g. 2-member test double) has [] but no "Link" member
+          nil
+        end
+
+        def read_content_type(response)
+          return response.content_type if response.respond_to?(:content_type) && !response.content_type.nil?
+          return response["Content-Type"] if response.respond_to?(:[]) && response["Content-Type"]
+
+          nil
+        rescue NameError
           nil
         end
 

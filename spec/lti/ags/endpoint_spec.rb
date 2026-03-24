@@ -24,6 +24,16 @@ RSpec.describe Lti::Advantage::AGS::Endpoint do
     expect(endpoint.score_url).to eq("https://platform.example/line_items/42/scores")
   end
 
+  it "derives the results endpoint from nested lineitem paths and preserves query params" do
+    nested_endpoint = described_class.new(
+      "lineitem" => "https://platform.example/courses/1/line_items/42?resource_link_id=abc123",
+      "scope" => [described_class::RESULT_SCOPE]
+    )
+
+    expect(nested_endpoint.results_url)
+      .to eq("https://platform.example/courses/1/line_items/42/results?resource_link_id=abc123")
+  end
+
   it "raises when score scope is missing" do
     readonly_endpoint = described_class.new(
       "lineitem" => "https://platform.example/line_items/42",

@@ -4,7 +4,12 @@ require "uri"
 
 RSpec.describe Lti::Advantage::AGS::ResultService do
   Response = Struct.new(:code, :body)
-  ResponseWithLink = Struct.new(:code, :body, :link_header)
+  ResponseWithLink = Struct.new(:code, :body, :link_header, :content_type) do
+    def initialize(code, body, link_header, content_type = Lti::Advantage::AGS::ResultService::RESULT_CONTAINER_TYPE)
+      super(code, body, link_header, content_type)
+    end
+  end
+  ResponseWithLinkAndType = Struct.new(:code, :body, :link_header, :content_type)
 
   let(:registration) do
     Lti::Advantage::Registration.new(
@@ -113,6 +118,13 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
 
   subject(:result_service) { described_class.new(service_client: service_client) }
 
+  it "exposes read-only public API methods for result retrieval" do
+    expect(described_class.public_instance_methods(false))
+      .to include(:list, :list_page, :list_all)
+    expect(described_class.public_instance_methods(false))
+      .not_to include(:publish, :create, :update, :delete)
+  end
+
   it "requests an OAuth token and GETs results with the required Accept media type" do
     results = result_service.list
 
@@ -158,6 +170,29 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
     expect(results.first.user_id).to eq("user-1")
     expect(results.first.result_score).to eq(0.5)
     expect(results.first.result_maximum).to eq(1) # default when omitted
+  end
+
+  it "returns an empty array when filtering by user_id and no result exists" do
+    empty_user_filter_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/line_items/42/results?foo=bar&user_id=user-missing"
+        ResponseWithLink.new("200", [].to_json, nil)
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: empty_user_filter_http
+    )
+
+    results = described_class.new(service_client: client).list(user_id: "user-missing")
+    expect(results).to eq([])
   end
 
   it "follows Link rel=next to fetch all pages when using list_all" do
@@ -254,8 +289,18 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
         ResponseWithLink.new(
           "200",
           [
-            { "userId" => "user-1", "resultScore" => 0.1 },
-            { "userId" => "user-1", "resultScore" => 0.2 }
+            {
+              "id" => "https://platform.example/line_items/42/results/1",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-1",
+              "resultScore" => 0.1
+            },
+            {
+              "id" => "https://platform.example/line_items/42/results/2",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-1",
+              "resultScore" => 0.2
+            }
           ].to_json,
           nil
         )
@@ -284,11 +329,29 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       when "https://platform.example/line_items/42/results?foo=bar&limit=1"
         ResponseWithLink.new(
           "200",
-          [{ "userId" => "user-1", "resultScore" => 0.1 }].to_json,
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/1",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-1",
+              "resultScore" => 0.1
+            }
+          ].to_json,
           %(<https://platform.example/line_items/42/results?page=2>; rel='next')
         )
       when "https://platform.example/line_items/42/results?page=2"
-        ResponseWithLink.new("200", [{ "userId" => "user-2", "resultScore" => 0.2 }].to_json, nil)
+        ResponseWithLink.new(
+          "200",
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/2",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-2",
+              "resultScore" => 0.2
+            }
+          ].to_json,
+          nil
+        )
       else
         Response.new("404", "not found")
       end
@@ -313,11 +376,29 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       when "https://platform.example/line_items/42/results?foo=bar&limit=1"
         ResponseWithLink.new(
           "200",
-          [{ "userId" => "user-1", "resultScore" => 0.1 }].to_json,
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/1",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-1",
+              "resultScore" => 0.1
+            }
+          ].to_json,
           %(<https://platform.example/line_items/42/results?page=3>; rel="last", <https://platform.example/line_items/42/results?page=2>; rel="next")
         )
       when "https://platform.example/line_items/42/results?page=2"
-        ResponseWithLink.new("200", [{ "userId" => "user-2", "resultScore" => 0.2 }].to_json, nil)
+        ResponseWithLink.new(
+          "200",
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/2",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-2",
+              "resultScore" => 0.2
+            }
+          ].to_json,
+          nil
+        )
       else
         Response.new("404", "not found")
       end
@@ -331,6 +412,42 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
 
     results = described_class.new(service_client: client).list_all(limit: 1)
     expect(results.map(&:user_id)).to eq(%w[user-1 user-2])
+  end
+
+  it "parses next link when a non-rel quoted parameter contains commas" do
+    quoted_comma_link_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/line_items/42/results?foo=bar&limit=1"
+        ResponseWithLink.new(
+          "200",
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/1",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-1",
+              "resultScore" => 0.1
+            }
+          ].to_json,
+          %(<https://platform.example/line_items/42/results?page=2>; rel="next"; title="page, two")
+        )
+      when "https://platform.example/line_items/42/results?page=2"
+        ResponseWithLink.new("200", [].to_json, nil)
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: quoted_comma_link_http
+    )
+
+    page = described_class.new(service_client: client).list_page(limit: 1)
+    expect(page[:next_url]).to eq("https://platform.example/line_items/42/results?page=2")
   end
 
   it "derives /results correctly when the lineitem url ends with a trailing slash" do
@@ -386,7 +503,18 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       when "https://platform.example/oauth2/token"
         Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when "https://platform.example/line_items/42/results?foo=bar&baz=qux&user_id=user-1&limit=1"
-        ResponseWithLink.new("200", [{ "userId" => "user-1", "resultScore" => 0.1 }].to_json, nil)
+        ResponseWithLink.new(
+          "200",
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/1",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-1",
+              "resultScore" => 0.1
+            }
+          ].to_json,
+          nil
+        )
       else
         Response.new("404", "not found")
       end
@@ -451,6 +579,238 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
     end.to raise_error(Lti::Advantage::ServiceError)
   end
 
+  it "maps 400 responses to ServiceError with HTTP 400 message" do
+    bad_request_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/line_items/42/results?foo=bar"
+        Response.new("400", "bad request")
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: bad_request_http
+    )
+
+    expect do
+      described_class.new(service_client: client).list
+    end.to raise_error(Lti::Advantage::ServiceError, /HTTP 400/)
+  end
+
+  it "maps 401 responses to AuthorizationError with HTTP 401 message" do
+    unauthorized_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/line_items/42/results?foo=bar"
+        Response.new("401", "unauthorized")
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: unauthorized_http
+    )
+
+    expect do
+      described_class.new(service_client: client).list
+    end.to raise_error(Lti::Advantage::AuthorizationError, /HTTP 401/)
+  end
+
+  it "maps 404 responses to ServiceError with HTTP 404 message" do
+    not_found_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/line_items/42/results?foo=bar"
+        Response.new("404", "not found")
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: not_found_http
+    )
+
+    expect do
+      described_class.new(service_client: client).list
+    end.to raise_error(Lti::Advantage::ServiceError, /HTTP 404/)
+  end
+
+  it "raises when result media type is not resultcontainer+json" do
+    wrong_type_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/line_items/42/results?foo=bar"
+        ResponseWithLinkAndType.new(
+          "200",
+          [].to_json,
+          nil,
+          "application/json"
+        )
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: wrong_type_http
+    )
+
+    expect do
+      described_class.new(service_client: client).list
+    end.to raise_error(Lti::Advantage::ServiceError, /resultcontainer\+json/)
+  end
+
+  it "accepts result media type with parameters (e.g., charset)" do
+    typed_with_params_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/line_items/42/results?foo=bar"
+        ResponseWithLinkAndType.new(
+          "200",
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/1",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-1",
+              "resultScore" => 0.83
+            }
+          ].to_json,
+          nil,
+          "#{described_class::RESULT_CONTAINER_TYPE}; charset=utf-8"
+        )
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: typed_with_params_http
+    )
+
+    results = described_class.new(service_client: client).list
+    expect(results.length).to eq(1)
+    expect(results.first.user_id).to eq("user-1")
+    expect(results.first.result_score).to eq(0.83)
+  end
+
+  it "raises when result media type header is missing" do
+    missing_type_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/line_items/42/results?foo=bar"
+        ResponseWithLinkAndType.new("200", [].to_json, nil, nil)
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: missing_type_http
+    )
+
+    expect do
+      described_class.new(service_client: client).list
+    end.to raise_error(Lti::Advantage::ServiceError, /Content-Type|resultcontainer\+json/)
+  end
+
+  it "raises when scoreOf does not match the resolved line item URL" do
+    mismatch_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/line_items/42/results?foo=bar"
+        ResponseWithLink.new(
+          "200",
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/1",
+              "scoreOf" => "https://platform.example/line_items/999",
+              "userId" => "user-1",
+              "resultScore" => 0.9
+            }
+          ].to_json,
+          nil
+        )
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: mismatch_http
+    )
+
+    expect do
+      described_class.new(service_client: client).list
+    end.to raise_error(Lti::Advantage::ValidationError, /scoreOf is not equal to line item/)
+  end
+
+  it "accepts scoreOf matching line item after normalization" do
+    normalized_match_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/line_items/42/results?foo=bar"
+        ResponseWithLink.new(
+          "200",
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/1",
+              "scoreOf" => "https://platform.example/line_items/42/?source=gradebook#fragment",
+              "userId" => "user-1",
+              "resultScore" => 0.9
+            }
+          ].to_json,
+          nil
+        )
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: normalized_match_http
+    )
+
+    results = described_class.new(service_client: client).list
+    expect(results.length).to eq(1)
+    expect(results.first.score_of).to include("/line_items/42/")
+  end
+
   it "returns next_url nil when Link header is blank" do
     blank_link_http = lambda do |method:, url:, headers:, body: nil|
       requests << { method: method, url: url, headers: headers, body: body }
@@ -474,6 +834,120 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
     expect(page[:next_url]).to be_nil
   end
 
+  it "parses Link rel=NEXT case-insensitively" do
+    uppercase_rel_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/line_items/42/results?foo=bar&limit=1"
+        ResponseWithLink.new(
+          "200",
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/1",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-1",
+              "resultScore" => 0.1
+            }
+          ].to_json,
+          %(<https://platform.example/line_items/42/results?page=2>; rel="NEXT")
+        )
+      when "https://platform.example/line_items/42/results?page=2"
+        ResponseWithLink.new("200", [].to_json, nil)
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: uppercase_rel_http
+    )
+
+    page = described_class.new(service_client: client).list_page(limit: 1)
+    expect(page[:next_url]).to eq("https://platform.example/line_items/42/results?page=2")
+  end
+
+  it "uses page_url directly in list_page without rebuilding the endpoint URL" do
+    page_url_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/paginated/results?page=2"
+        ResponseWithLink.new(
+          "200",
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/2",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-2",
+              "resultScore" => 0.2
+            }
+          ].to_json,
+          nil
+        )
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: page_url_http
+    )
+
+    described_class.new(service_client: client).list_page(
+      page_url: "https://platform.example/paginated/results?page=2"
+    )
+
+    results_request = requests.find { |r| r[:method] == :get && r[:url].include?("/results") }
+    expect(results_request[:url]).to eq("https://platform.example/paginated/results?page=2")
+  end
+
+  it "uses explicit line_item_url over launch claim for endpoint and scoreOf validation" do
+    override_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+      case url
+      when "https://platform.example/oauth2/token"
+        Response.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when "https://platform.example/line_items/777/results?foo=bar"
+        ResponseWithLink.new(
+          "200",
+          [
+            {
+              "id" => "https://platform.example/line_items/777/results/1",
+              "scoreOf" => "https://platform.example/line_items/777",
+              "userId" => "user-1",
+              "resultScore" => 0.7
+            }
+          ].to_json,
+          nil
+        )
+      else
+        Response.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: override_http
+    )
+
+    results = described_class.new(service_client: client).list(
+      line_item_url: "https://platform.example/line_items/777?foo=bar"
+    )
+
+    results_request = requests.find { |r| r[:method] == :get && r[:url].include?("/results") }
+    expect(results_request[:url]).to eq("https://platform.example/line_items/777/results?foo=bar")
+    expect(results.length).to eq(1)
+    expect(results.first.score_of).to eq("https://platform.example/line_items/777")
+  end
+
   it "detects pagination cycles in list_all" do
     cycle_http = lambda do |method:, url:, headers:, body: nil|
       requests << { method: method, url: url, headers: headers, body: body }
@@ -483,13 +957,27 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       when "https://platform.example/line_items/42/results?foo=bar&limit=1"
         ResponseWithLink.new(
           "200",
-          [{ "userId" => "user-1", "resultScore" => 0.1 }].to_json,
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/1",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-1",
+              "resultScore" => 0.1
+            }
+          ].to_json,
           %(<https://platform.example/line_items/42/results?page=2>; rel="next")
         )
       when "https://platform.example/line_items/42/results?page=2"
         ResponseWithLink.new(
           "200",
-          [{ "userId" => "user-2", "resultScore" => 0.2 }].to_json,
+          [
+            {
+              "id" => "https://platform.example/line_items/42/results/2",
+              "scoreOf" => "https://platform.example/line_items/42",
+              "userId" => "user-2",
+              "resultScore" => 0.2
+            }
+          ].to_json,
           %(<https://platform.example/line_items/42/results?page=2>; rel="next")
         )
       else

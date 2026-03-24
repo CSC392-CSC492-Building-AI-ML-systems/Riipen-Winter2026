@@ -43,13 +43,19 @@ module Lti
           uri.to_s
         end
 
+        # build the results url
         def results_url(line_item_url: nil)
           require_scope!(RESULT_SCOPE)
 
           base = resolve_line_item_url(line_item_url)
           uri = URI.parse(base)
-          uri.path = "#{uri.path.sub(%r{/$}, "")}/results"
-          uri.query = nil if uri.query == ""
+          # no double append of /results
+          unless uri.path.end_with?("/results")
+            uri.path = "#{uri.path.sub(%r{/$}, "")}/results"
+          end
+          if uri.query == ""
+            uri.query = nil
+          end
           uri.to_s
         end
 

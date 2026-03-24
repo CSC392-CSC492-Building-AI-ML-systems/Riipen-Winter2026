@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
+require "uri"
+
 module Lti
   module Advantage
     module AGS
       # Represents a single result from the AGS Result service (read-only gradebook cell).
-      # @see https://www.imsglobal.org/spec/lti-ags/v2p0/#result-service
+      # https://www.imsglobal.org/spec/lti-ags/v2p0/#result-service
       class Result
         attr_reader :id, :score_of, :user_id, :result_score, :result_maximum,
                     :scoring_user_id, :comment
@@ -13,32 +15,59 @@ module Lti
           id: nil, score_of: nil, user_id: nil, result_score: nil, result_maximum: nil,
           scoring_user_id: nil, comment: nil
         )
-          @id = optional_string(id)
-          @score_of = optional_string(score_of)
+          # unique for result: required to identify result(?)
+          @id = id.to_s
+          # must match line item url (required?)
+          @score_of = score_of.to_s
+          # user_id MUST exist
           @user_id = user_id.to_s
+          # optional, numeric
           @result_score = result_score
-          # Spec 3.3.4.6: resultMaximum MUST be positive; default 1 if omitted or invalid
-          raw_max = result_maximum.nil? ? 1 : result_maximum
-          @result_maximum = raw_max.is_a?(Numeric) && raw_max.positive? ? raw_max : 1
+          # resultMaximum MUST be positive, default 1
+          @result_maximum = get_max(result_maximum)
+          # optional
           @scoring_user_id = optional_string(scoring_user_id)
+          # optional
           @comment = optional_string(comment)
         end
 
-        # Build a Result from the platform JSON (camelCase keys).
-        # Handles optional fields (resultScore, resultMaximum, scoringUserId, comment) per spec 3.3.4.
-        # @raise [ArgumentError] when hash is not a Hash
-        # @raise [ValidationError] when userId is missing (spec 3.3.4.4) or resultScore is non-numeric (spec 3.3.4.5)
+        # read JSON to build Result
         def self.from_json(hash)
           raise ArgumentError, "Result must be built from a Hash, got #{hash.class}" unless hash.is_a?(Hash)
-
+          # transform JSON to string
           h = hash.transform_keys(&:to_s)
-          user_id_val = h["userId"]
-          if user_id_val.nil? || user_id_val.to_s.strip.empty?
+          # if id not exist
+          if h["id"].nil? || h["id"].to_s.strip.empty? || !h["id"].is_a?(String)
+            raise ValidationError, "id is required"
+          end
+          validate_url!("id", h["id"])
+
+          # if value for scoringUserId provided but not string
+          if !h["scoringUserId"].nil? && !h["scoringUserId"].is_a?(String)
+            raise ValidationError, "scoringUserId must be a string"
+          end
+          # if user_id not exist (null or empty)
+          if h["userId"].nil? || h["userId"].to_s.strip.empty? || !h["userId"].is_a?(String)
             raise ValidationError, "userId is required"
           end
-          result_score_val = h["resultScore"]
-          if !result_score_val.nil? && !result_score_val.is_a?(Numeric)
-            raise ValidationError, "resultScore must be numeric when present"
+          # if result_score exist but not numeric
+          if !h["resultScore"].nil? && !h["resultScore"].is_a?(Numeric)
+            raise ValidationError, "resultScore must be numeric"
+          end
+
+          # scoreOf is required
+          if h["scoreOf"].nil? || h["scoreOf"].to_s.strip.empty? || !h["scoreOf"].is_a?(String)
+            raise ValidationError, "scoreOf is required"
+          end
+          validate_url!("scoreOf", h["scoreOf"])
+          # if value for resultMaximum provided but not numeric, default to 1
+          # if !h["resultMaximum"].nil? && !h["resultMaximum"].is_a?(Numeric)
+          #   raise ValidationError, "resultMaximum must be numeric"
+          # end
+          
+          # if value for comment provided but not string
+          if !h["comment"].nil? && !h["comment"].is_a?(String)
+            raise ValidationError, "comment must be a string"
           end
 
           new(
@@ -52,14 +81,32 @@ module Lti
           )
         end
 
-        private
-
+      private
+        # check if the string value exists
         def optional_string(value)
           stripped = value.to_s.strip
           return nil if stripped.empty?
 
           stripped
         end
+
+        # default result_maximum to 1 if not positive number
+        def get_max(value)
+          raw_max = value.nil? ? 1.0 : value
+          return raw_max.is_a?(Numeric) && raw_max.positive? ? raw_max : 1.0
+        end
+
+        # id and scoringUserId must be of URL string
+        def self.validate_url!(field_name, value)
+          uri = URI.parse(value)
+          unless uri.is_a?(URI::HTTP) && !uri.scheme.nil? && !uri.host.nil?
+            raise ValidationError, "#{field_name} must be a URL string"
+          end
+        rescue URI::InvalidURIError
+          raise ValidationError, "#{field_name} must be a URL string"
+        end
+        private_class_method :validate_url!
+
       end
     end
   end
