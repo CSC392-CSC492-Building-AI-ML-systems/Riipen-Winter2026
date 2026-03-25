@@ -90,10 +90,13 @@ Anonymous launches are supported (`sub` may be omitted).
 ```ruby
 return unless launch.nrps_available?
 
+token_endpoint = launch.registration.token_endpoint
+raise "Configure registration.token_endpoint for NRPS" if token_endpoint.nil?
+
 access_token = Lti::Advantage::Services::AccessToken.new(
   key_pair: TOOL_KEY_PAIR,
   client_id: launch.registration.client_id,
-  token_endpoint: launch.registration.token_endpoint,
+  token_endpoint: token_endpoint,
   scope: Lti::Advantage::Services::NamesRoleService::SCOPE,
   deployment_id: launch.deployment_id
 ).fetch
@@ -109,11 +112,13 @@ result.members.each do |member|
 end
 ```
 
-`AccessToken` uses the platform token endpoint configured on the selected `Registration`, and `NamesRoleService` can follow `next_page_url` or `differences_url` links exposed by the LMS.
+`launch.nrps_available?` only reflects what the launch advertises: it checks for a valid `context_memberships_url` plus at least one supported NRPS service version. It does not verify your `Registration` configuration, token issuance, granted scopes, or downstream HTTP success.
+
+`AccessToken` uses the platform token endpoint configured on the selected `Registration`, and `NamesRoleService#memberships` normalizes short role filters like `"Learner"` to their IMS membership role URIs while validating `limit` and `resource_link_id`. `NamesRoleService#memberships_from_url` and pagination follow-up URLs allow cross-origin links by default; pass `enforce_same_origin: true` if you want stricter same-origin behavior.
 
 ## Demo app and tool JWKS
 
-The Sinatra demo in `demo/app.rb` uses the `Client` flow for login and launch validation, stores the NRPS memberships URL only after a successful launch, and then exchanges a JWT client assertion for an NRPS access token before calling the memberships endpoint.
+The Sinatra demo in `demo/app.rb` uses the `Client` flow for login and launch validation, stores the NRPS memberships URL only after a successful launch, exchanges a JWT client assertion for an NRPS access token, and proxies `next_page_url` / `differences_url` back through the tool route so the LMS bearer token never needs to touch the browser.
 
 ## API Documentation (RDoc)
 

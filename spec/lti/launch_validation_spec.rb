@@ -96,20 +96,41 @@ RSpec.describe "LTI launch validation" do
     expect(launch.nrps_available?).to be true
   end
 
-  it "treats malformed NRPS claims as unavailable after launch validation" do
+  it "rejects NRPS claims that are not objects" do
+    payload = base_payload.merge(Lti::Advantage::Launch::NRPS_CLAIM => "not-an-object")
+    malformed_nrps_token = JWT.encode(payload, private_key, "RS256", kid: "platform-kid")
+
+    expect do
+      client.validate_launch!(id_token: malformed_nrps_token, state: "state-123")
+    end.to raise_error(Lti::Advantage::ValidationError, /NRPS claim must be an object/)
+  end
+
+  it "rejects NRPS claims with invalid memberships URLs" do
     payload = base_payload.merge(
       Lti::Advantage::Launch::NRPS_CLAIM => {
-        "context_memberships_url" => "   ",
+        "context_memberships_url" => "/memberships",
+        "service_versions" => ["2.0"]
+      }
+    )
+    malformed_nrps_token = JWT.encode(payload, private_key, "RS256", kid: "platform-kid")
+
+    expect do
+      client.validate_launch!(id_token: malformed_nrps_token, state: "state-123")
+    end.to raise_error(Lti::Advantage::ValidationError, /NRPS context_memberships_url/)
+  end
+
+  it "rejects NRPS claims with invalid service_versions" do
+    payload = base_payload.merge(
+      Lti::Advantage::Launch::NRPS_CLAIM => {
+        "context_memberships_url" => nrps_claim.fetch("context_memberships_url"),
         "service_versions" => "2.0"
       }
     )
     malformed_nrps_token = JWT.encode(payload, private_key, "RS256", kid: "platform-kid")
 
-    launch = client.validate_launch!(id_token: malformed_nrps_token, state: "state-123")
-
-    expect(launch.context_memberships_url).to be_nil
-    expect(launch.nrps_service_versions).to eq([])
-    expect(launch.nrps_available?).to be false
+    expect do
+      client.validate_launch!(id_token: malformed_nrps_token, state: "state-123")
+    end.to raise_error(Lti::Advantage::ValidationError, /NRPS service_versions must be an array/)
   end
 
   it "allows anonymous launches with no sub claim" do

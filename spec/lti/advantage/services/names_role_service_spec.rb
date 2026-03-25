@@ -11,6 +11,20 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
     )
   end
 
+  describe ".new" do
+    it "rejects blank access tokens" do
+      expect do
+        described_class.new(memberships_url: memberships_url, access_token: "   ")
+      end.to raise_error(Lti::Advantage::ConfigurationError, /access_token/)
+    end
+
+    it "rejects invalid memberships URLs" do
+      expect do
+        described_class.new(memberships_url: "/memberships", access_token: access_token)
+      end.to raise_error(Lti::Advantage::Error, /absolute HTTP\(S\) URL/)
+    end
+  end
+
   def build_membership_body(members: [], context: nil)
     {
       "id" => memberships_url,
@@ -85,7 +99,7 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
       expect(result.members.first.user_id).to eq("user-jane")
     end
 
-    it "passes role, limit, and rlid query params" do
+    it "normalizes short role filters and passes validated query params" do
       captured_url = nil
       response_double = double(
         "resp",
@@ -101,9 +115,13 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
 
       subject.memberships(role: "Instructor", limit: 10, resource_link_id: "link-99")
 
-      expect(captured_url).to include("role=Instructor")
-      expect(captured_url).to include("limit=10")
-      expect(captured_url).to include("rlid=link-99")
+      params = URI.decode_www_form(URI.parse(captured_url).query.to_s).to_h
+
+      expect(params).to include(
+        "role" => "http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor",
+        "limit" => "10",
+        "rlid" => "link-99"
+      )
     end
 
     it "merges query params with an existing memberships URL query string" do
@@ -204,10 +222,95 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
       expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /member at index 0/)
     end
 
-    it "rejects pagination URLs on a different origin" do
+    it "raises an Error when a member is missing user_id" do
+      allow(Faraday).to receive(:get).and_return(
+        double(
+          "resp",
+          success?: true,
+          body: build_membership_body(members: [{ "roles" => ["Learner"], "status" => "Active" }]).to_json,
+          headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
+        )
+      )
+
+      expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /user_id/)
+    end
+
+    it "raises an Error when member roles is not an array" do
+      allow(Faraday).to receive(:get).and_return(
+        double(
+          "resp",
+          success?: true,
+          body: build_membership_body(members: [{ "user_id" => "user-1", "roles" => "Learner" }]).to_json,
+          headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
+        )
+      )
+
+      expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /roles must be an array/)
+    end
+
+    it "raises an Error when member status is invalid" do
+      allow(Faraday).to receive(:get).and_return(
+        double(
+          "resp",
+          success?: true,
+          body: build_membership_body(
+            members: [{ "user_id" => "user-1", "roles" => ["Learner"], "status" => "Paused" }]
+          ).to_json,
+          headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
+        )
+      )
+
+      expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /status must be one of/)
+    end
+
+    it "allows page URLs on a different origin by default" do
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body(members: [jane_member]).to_json,
+        headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      result = subject.memberships_from_url("https://cdn.lms.example.com/sections/2923/memberships?page=2")
+
+      expect(result.members.first.user_id).to eq("user-jane")
+    end
+
+    it "rejects page URLs on a different origin when same-origin enforcement is enabled" do
+      strict_service = described_class.new(
+        memberships_url: memberships_url,
+        access_token: access_token,
+        enforce_same_origin: true
+      )
+
       expect do
-        subject.memberships_from_url("https://evil.example.com/sections/2923/memberships?page=2")
+        strict_service.memberships_from_url("https://cdn.lms.example.com/sections/2923/memberships?page=2")
       end.to raise_error(Lti::Advantage::Error, /different origin/)
+    end
+
+    it "rejects blank role filters" do
+      expect do
+        subject.memberships(role: "   ")
+      end.to raise_error(Lti::Advantage::Error, /role cannot be blank/)
+    end
+
+    it "rejects invalid short role filters" do
+      expect do
+        subject.memberships(role: "bad role")
+      end.to raise_error(Lti::Advantage::Error, /role URI or short role name/)
+    end
+
+    it "rejects non-positive limits" do
+      expect do
+        subject.memberships(limit: 0)
+      end.to raise_error(Lti::Advantage::Error, /limit must be a positive integer/)
+    end
+
+    it "rejects blank resource_link_id values" do
+      expect do
+        subject.memberships(resource_link_id: "   ")
+      end.to raise_error(Lti::Advantage::Error, /resource_link_id cannot be blank/)
     end
   end
 
@@ -272,6 +375,113 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
       result = subject.memberships
       expect(result.next_page_url).to eq(next_url)
     end
+
+    it "resolves relative next_page_url values against the request URL" do
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<?page=2>; rel=\"next\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      result = subject.memberships
+      expect(result.next_page_url).to eq("#{memberships_url}?page=2")
+    end
+
+    it "allows next links hosted on a different origin by default" do
+      next_url = "https://cdn.lms.example.com/sections/2923/memberships?page=2"
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<#{next_url}>; rel=\"next\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      result = subject.memberships
+      expect(result.next_page_url).to eq(next_url)
+    end
+
+    it "rejects next links hosted on a different origin when same-origin enforcement is enabled" do
+      next_url = "https://cdn.lms.example.com/sections/2923/memberships?page=2"
+      strict_service = described_class.new(
+        memberships_url: memberships_url,
+        access_token: access_token,
+        enforce_same_origin: true
+      )
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<#{next_url}>; rel=\"next\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      expect { strict_service.memberships }.to raise_error(Lti::Advantage::Error, /different origin/)
+    end
+
+    it "allows differences links hosted on a different origin by default" do
+      diff_url = "https://cdn.lms.example.com/differences?since=1422554502"
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<#{diff_url}>; rel=\"differences\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      result = subject.memberships
+      expect(result.differences_url).to eq(diff_url)
+    end
+
+    it "rejects differences links hosted on a different origin when same-origin enforcement is enabled" do
+      diff_url = "https://cdn.lms.example.com/differences?since=1422554502"
+      strict_service = described_class.new(
+        memberships_url: memberships_url,
+        access_token: access_token,
+        enforce_same_origin: true
+      )
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<#{diff_url}>; rel=\"differences\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      expect { strict_service.memberships }.to raise_error(Lti::Advantage::Error, /different origin/)
+    end
+
+    it "raises an Error when the Link header is malformed" do
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<#{memberships_url}?page=2; rel=\"next\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /Malformed NRPS Link header/)
+    end
   end
 
   describe "#all_members" do
@@ -319,9 +529,53 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
 
       subject.all_members(role: "Instructor", limit: 20, resource_link_id: "link-99")
 
-      expect(captured_url).to include("role=Instructor")
-      expect(captured_url).to include("limit=20")
-      expect(captured_url).to include("rlid=link-99")
+      params = URI.decode_www_form(URI.parse(captured_url).query.to_s).to_h
+
+      expect(params).to include(
+        "role" => "http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor",
+        "limit" => "20",
+        "rlid" => "link-99"
+      )
+    end
+
+    it "raises an Error when pagination loops back to a previously seen page" do
+      page2_url = "#{memberships_url}?p=2"
+      page1_resp = double(
+        "resp1",
+        success?: true,
+        body: build_membership_body(members: [jane_member]).to_json,
+        headers: { "link" => "<#{page2_url}>; rel=\"next\"", "content-type" => described_class::MEDIA_TYPE }
+      )
+      page2_resp = double(
+        "resp2",
+        success?: true,
+        body: build_membership_body(members: [bob_member]).to_json,
+        headers: { "link" => "<#{memberships_url}>; rel=\"next\"", "content-type" => described_class::MEDIA_TYPE }
+      )
+
+      call_count = 0
+      allow(Faraday).to receive(:get) do
+        call_count += 1
+        call_count == 1 ? page1_resp : page2_resp
+      end
+
+      expect { subject.all_members }.to raise_error(Lti::Advantage::Error, /pagination cycle/)
+    end
+
+    it "raises an Error when pagination exceeds the maximum page count" do
+      page2_url = "#{memberships_url}?p=2"
+      page1_resp = double(
+        "resp1",
+        success?: true,
+        body: build_membership_body(members: [jane_member]).to_json,
+        headers: { "link" => "<#{page2_url}>; rel=\"next\"", "content-type" => described_class::MEDIA_TYPE }
+      )
+
+      allow(Faraday).to receive(:get).and_return(page1_resp)
+
+      expect do
+        subject.all_members(max_pages: 1)
+      end.to raise_error(Lti::Advantage::Error, /exceeded 1 pages/)
     end
   end
 end

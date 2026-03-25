@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "jwt"
+require "uri"
 
 module Lti
   module Advantage
@@ -183,6 +184,7 @@ module Lti
 
         validate_audience_authorized_party!(payload, registration)
         validate_nonce_binding!(payload, state_data)
+        validate_nrps_claim!(payload)
       end
 
       # Verifies that a claim exists and is a non-empty String value.
@@ -217,6 +219,38 @@ module Lti
         return if payload["nonce"] == expected_nonce
 
         raise ValidationError, "nonce does not match the provided state"
+      end
+
+      def validate_nrps_claim!(payload)
+        claim = payload[Launch::NRPS_CLAIM]
+        return if claim.nil?
+
+        raise ValidationError, "NRPS claim must be an object" unless claim.is_a?(Hash)
+
+        validate_required_http_url!(claim["context_memberships_url"], "NRPS context_memberships_url")
+        validate_string_array!(claim["service_versions"], "NRPS service_versions")
+      end
+
+      def validate_required_http_url!(value, field_name)
+        string_value = value.to_s.strip
+        raise ValidationError, "#{field_name} must be a non-empty string" if string_value.empty?
+
+        uri = URI.parse(string_value)
+        return if uri.is_a?(URI::HTTP) && !uri.host.nil?
+
+        raise ValidationError, "#{field_name} must be an absolute HTTP(S) URL"
+      rescue URI::InvalidURIError => e
+        raise ValidationError, "Invalid #{field_name}: #{e.message}"
+      end
+
+      def validate_string_array!(value, field_name)
+        raise ValidationError, "#{field_name} must be an array" unless value.is_a?(Array)
+
+        value.each_with_index do |entry, index|
+          next unless entry.to_s.strip.empty?
+
+          raise ValidationError, "#{field_name} entry at index #{index} must be a non-empty string"
+        end
       end
 
       # Consumes state after successful token and claim validation.

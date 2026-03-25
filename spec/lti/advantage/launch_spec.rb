@@ -74,8 +74,26 @@ RSpec.describe Lti::Advantage::Launch do
   end
 
   describe "#nrps_available?" do
-    it "returns true when the memberships URL is present" do
+    it "returns true when the memberships URL is present and valid" do
       launch = described_class.new(payload: payload_with_nrps, header: {}, registration: registration)
+      expect(launch.nrps_available?).to be true
+    end
+
+    it "does not depend on registration token endpoint availability" do
+      registration_without_token_endpoint = Lti::Advantage::Registration.new(
+        issuer: "https://platform.example",
+        client_id: "client-123",
+        authorization_endpoint: "https://platform.example/oidc/auth",
+        jwks_url: "https://platform.example/.well-known/jwks.json",
+        deployment_ids: ["deployment-123"]
+      )
+
+      launch = described_class.new(
+        payload: payload_with_nrps,
+        header: {},
+        registration: registration_without_token_endpoint
+      )
+
       expect(launch.nrps_available?).to be true
     end
 
@@ -83,6 +101,19 @@ RSpec.describe Lti::Advantage::Launch do
       launch = described_class.new(
         payload: payload_with_nrps.merge(
           described_class::NRPS_CLAIM => nrps_claim_data.merge("context_memberships_url" => "   ")
+        ),
+        header: {},
+        registration: registration
+      )
+
+      expect(launch.context_memberships_url).to be_nil
+      expect(launch.nrps_available?).to be false
+    end
+
+    it "returns false when the memberships URL is not an absolute HTTP(S) URL" do
+      launch = described_class.new(
+        payload: payload_with_nrps.merge(
+          described_class::NRPS_CLAIM => nrps_claim_data.merge("context_memberships_url" => "/memberships")
         ),
         header: {},
         registration: registration

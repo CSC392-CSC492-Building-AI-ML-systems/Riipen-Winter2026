@@ -2,6 +2,8 @@
 
 require "sinatra"
 require "dotenv/load"
+require "securerandom"
+require "uri"
 require_relative "../lib/lti/advantage"
 
 # Bind to 0.0.0.0 to listen on all network interfaces
@@ -11,13 +13,16 @@ set :bind, "0.0.0.0"
 set :protection, except: %i[http_origin remote_token session_hijacking frame_options host_authorization]
 
 # Allow cookies to be sent in an iframe (SameSite=None; Secure=True is usually required by modern browsers)
-# Note: For local testing without HTTPS, we might still face some cookie blocking.
+# Note: Local iframe testing over HTTP still requires `SESSION_COOKIE_SECURE=false`.
+SESSION_SECRET = ENV["SESSION_SECRET"] || SecureRandom.hex(64)
+SESSION_COOKIE_SECURE = ENV.fetch("SESSION_COOKIE_SECURE", "false") == "true"
+
 use Rack::Session::Cookie,
     key: "rack.session",
     path: "/",
-    secret: "a_very_long_and_very_secure_secret_key_that_is_at_least_64_bytes_long_1234567890_abcdefg",
+    secret: SESSION_SECRET,
     same_site: :none,
-    secure: false
+    secure: SESSION_COOKIE_SECURE
 
 # Log every request to the terminal
 before do
@@ -35,7 +40,9 @@ helpers do
     value = normalized_param(name)
     value ? Integer(value, 10) : nil
   end
+end
 
+helpers do
   def memberships_response_body(result)
     {
       context: result.context,
@@ -49,8 +56,18 @@ helpers do
         }
       end,
       next_page_url: result.next_page_url,
-      differences_url: result.differences_url
+      differences_url: result.differences_url,
+      next_page_path: memberships_route_url(page_url: result.next_page_url),
+      differences_path: memberships_route_url(page_url: result.differences_url)
     }
+  end
+end
+
+helpers do
+  def memberships_route_url(page_url: nil)
+    return nil if page_url.nil?
+
+    "/nrps/members?#{URI.encode_www_form(page_url: page_url)}"
   end
 end
 
@@ -131,6 +148,7 @@ get "/nrps/members" do
   halt 400, "No memberships URL in session. Complete an LTI launch first." unless memberships_url
 
   limit = integer_param(:limit)
+  page_url = normalized_param(:page_url)
   role = normalized_param(:role)
   resource_link_id = normalized_param(:resource_link_id)
 
@@ -154,7 +172,11 @@ get "/nrps/members" do
   )
 
   begin
-    result = nrps.memberships(role: role, limit: limit, resource_link_id: resource_link_id)
+    result = if page_url
+               nrps.memberships_from_url(page_url)
+             else
+               nrps.memberships(role: role, limit: limit, resource_link_id: resource_link_id)
+             end
   rescue Lti::Advantage::Error => e
     halt 500, "Failed to fetch memberships: #{e.message}"
   end

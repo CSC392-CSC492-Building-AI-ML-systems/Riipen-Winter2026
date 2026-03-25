@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "uri"
+
 module Lti
   module Advantage
     # Immutable registration details for one LTI platform integration.
@@ -31,7 +33,7 @@ module Lti
         @client_id = assert_presence("client_id", client_id)
         @authorization_endpoint = assert_presence("authorization_endpoint", authorization_endpoint)
         @jwks_url = assert_presence("jwks_url", jwks_url)
-        @token_endpoint = normalize_optional_string("token_endpoint", token_endpoint)
+        @token_endpoint = normalize_optional_http_url("token_endpoint", token_endpoint)
         @deployment_ids = Array(deployment_ids).map(&:to_s).freeze
         @algorithms = Array(algorithms).map(&:to_s).freeze
       end
@@ -63,6 +65,18 @@ module Lti
         raise ArgumentError, "#{name} cannot be blank" if string_value.empty?
 
         string_value
+      end
+
+      def normalize_optional_http_url(name, value)
+        string_value = normalize_optional_string(name, value)
+        return nil if string_value.nil?
+
+        uri = URI.parse(string_value)
+        raise ArgumentError, "#{name} must be an absolute HTTP(S) URL" unless uri.is_a?(URI::HTTP) && !uri.host.nil?
+
+        uri.to_s
+      rescue URI::InvalidURIError => e
+        raise ArgumentError, "Invalid #{name}: #{e.message}"
       end
     end
   end

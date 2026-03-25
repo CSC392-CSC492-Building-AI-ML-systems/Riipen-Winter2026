@@ -38,4 +38,17 @@ RSpec.describe Lti::Advantage::Registration do
       )
     end.to raise_error(ArgumentError, /token_endpoint/)
   end
+
+  it "rejects token_endpoint values that are not absolute HTTP(S) URLs" do
+    expect do
+      described_class.new(
+        issuer: "https://platform.example",
+        client_id: "client-123",
+        authorization_endpoint: "https://platform.example/oidc/auth",
+        jwks_url: "https://platform.example/.well-known/jwks.json",
+        token_endpoint: "/login/oauth2/token",
+        deployment_ids: ["deployment-123"]
+      )
+    end.to raise_error(ArgumentError, /absolute HTTP\(S\) URL/)
+  end
 end

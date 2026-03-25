@@ -76,4 +76,22 @@ RSpec.describe Lti::Advantage::Membership do
     expect(minimal.email).to be_nil
     expect(minimal.name).to be_nil
   end
+
+  it "raises an Error when user_id is missing" do
+    expect do
+      described_class.new("roles" => ["Learner"])
+    end.to raise_error(Lti::Advantage::Error, /user_id/)
+  end
+
+  it "raises an Error when roles is not an array" do
+    expect do
+      described_class.new("user_id" => "xyz", "roles" => "Learner")
+    end.to raise_error(Lti::Advantage::Error, /roles must be an array/)
+  end
+
+  it "raises an Error when status is invalid" do
+    expect do
+      described_class.new("user_id" => "xyz", "roles" => ["Learner"], "status" => "Paused")
+    end.to raise_error(Lti::Advantage::Error, /status must be one of/)
+  end
 end

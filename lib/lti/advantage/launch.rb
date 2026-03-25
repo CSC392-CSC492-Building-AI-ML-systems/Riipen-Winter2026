@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "uri"
+
 module Lti
   module Advantage
     # Read-only view over a validated LTI launch token.
@@ -76,7 +78,7 @@ module Lti
       # Returns the context memberships URL to pass to NamesRoleService.
       # Returns nil if NRPS is not available for this launch.
       def context_memberships_url
-        normalize_optional_string(nrps_claim&.fetch("context_memberships_url", nil))
+        normalize_optional_http_url(nrps_claim&.fetch("context_memberships_url", nil))
       end
 
       # Returns the NRPS service versions supported by the LMS, e.g. ["2.0"].
@@ -90,8 +92,13 @@ module Lti
         end
       end
 
-      # Returns true when the launch includes a valid NRPS memberships URL and
-      # advertises a supported NRPS service version.
+      # Returns true when the launch advertises NRPS with a valid memberships
+      # URL and at least one supported service version.
+      #
+      # This is intentionally a claim-level availability check only. It does
+      # not verify that the selected registration has a token endpoint, that the
+      # platform will issue a token, that the tool has the required scope, or
+      # that later NRPS HTTP requests will succeed.
       def nrps_available?
         return false if context_memberships_url.nil?
 
@@ -107,6 +114,18 @@ module Lti
         return nil if string_value.empty?
 
         string_value
+      end
+
+      def normalize_optional_http_url(value)
+        string_value = normalize_optional_string(value)
+        return nil if string_value.nil?
+
+        uri = URI.parse(string_value)
+        return nil unless uri.is_a?(URI::HTTP) && !uri.host.nil?
+
+        uri.to_s
+      rescue URI::InvalidURIError
+        nil
       end
     end
   end

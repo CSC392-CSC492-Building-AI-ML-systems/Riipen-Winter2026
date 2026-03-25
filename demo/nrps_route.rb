@@ -18,6 +18,10 @@
 #      session[:nrps_memberships_url] = launch.context_memberships_url
 #      session[:lti_deployment_id] = launch.deployment_id
 #
+#    To follow `next_page_url` or `differences_url`, proxy them back through
+#    your tool route with `page_url` rather than sending the browser directly
+#    to the LMS.
+#
 # rubocop:disable Metrics/BlockLength
 get "/nrps/members" do
   memberships_url = session[:nrps_memberships_url]
@@ -39,6 +43,8 @@ get "/nrps/members" do
   end
 
   # 2. Fetch the roster
+  page_url = params[:page_url].to_s.strip
+  page_url = nil if page_url.empty?
   role_filter = params[:role].to_s.strip
   role_filter = nil if role_filter.empty?
   nrps = Lti::Advantage::Services::NamesRoleService.new(
@@ -47,7 +53,11 @@ get "/nrps/members" do
   )
 
   begin
-    result = nrps.memberships(role: role_filter)
+    result = if page_url
+               nrps.memberships_from_url(page_url)
+             else
+               nrps.memberships(role: role_filter)
+             end
   rescue Lti::Advantage::Error => e
     halt 500, "Failed to fetch memberships: #{e.message}"
   end
@@ -60,7 +70,12 @@ get "/nrps/members" do
       "<td>#{m.email || "(hidden)"}</td><td>#{short_roles}</td><td>#{m.status}</td></tr>"
   end
 
-  next_link = result.next_page_url ? "<p><a href='#{result.next_page_url}'>Next page →</a></p>" : ""
+  next_link = if result.next_page_url
+                encoded_url = URI.encode_www_form(page_url: result.next_page_url)
+                "<p><a href='/nrps/members?#{encoded_url}'>Next page -&gt;</a></p>"
+              else
+                ""
+              end
 
   <<~HTML
     <!DOCTYPE html>
