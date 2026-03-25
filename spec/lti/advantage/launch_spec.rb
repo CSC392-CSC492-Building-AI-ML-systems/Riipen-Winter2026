@@ -67,6 +67,18 @@ RSpec.describe Lti::Advantage::Launch do
       expect(launch.nrps_service_versions).to eq(["2.0"])
     end
 
+    it "ignores non-string service version entries" do
+      launch = described_class.new(
+        payload: payload_with_nrps.merge(
+          described_class::NRPS_CLAIM => nrps_claim_data.merge("service_versions" => ["2.0", 2.1, " "])
+        ),
+        header: {},
+        registration: registration
+      )
+
+      expect(launch.nrps_service_versions).to eq(["2.0"])
+    end
+
     it "returns an empty array when NRPS claim is absent" do
       launch = described_class.new(payload: payload_without_nrps, header: {}, registration: registration)
       expect(launch.nrps_service_versions).to eq([])

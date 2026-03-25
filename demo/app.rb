@@ -40,10 +40,41 @@ helpers do
     value = normalized_param(name)
     value ? Integer(value, 10) : nil
   end
+
+  def nrps_follow_ups
+    session[:nrps_follow_ups] ||= {}
+  end
+
+  def clear_nrps_follow_ups!
+    session[:nrps_follow_ups] = {}
+  end
+
+  def store_nrps_follow_up(page_url)
+    return nil if page_url.nil?
+
+    cursor = SecureRandom.urlsafe_base64(24)
+    nrps_follow_ups[cursor] = page_url
+    cursor
+  end
+
+  def fetch_nrps_follow_up(cursor)
+    return nil if cursor.nil?
+
+    nrps_follow_ups[cursor]
+  end
+
+  def delete_nrps_follow_up(cursor)
+    return if cursor.nil?
+
+    nrps_follow_ups.delete(cursor)
+  end
 end
 
 helpers do
   def memberships_response_body(result)
+    next_page_cursor = store_nrps_follow_up(result.next_page_url)
+    differences_cursor = store_nrps_follow_up(result.differences_url)
+
     {
       context: result.context,
       members: result.members.map do |member|
@@ -57,17 +88,17 @@ helpers do
       end,
       next_page_url: result.next_page_url,
       differences_url: result.differences_url,
-      next_page_path: memberships_route_url(page_url: result.next_page_url),
-      differences_path: memberships_route_url(page_url: result.differences_url)
+      next_page_path: memberships_route_url(cursor: next_page_cursor),
+      differences_path: memberships_route_url(cursor: differences_cursor)
     }
   end
 end
 
 helpers do
-  def memberships_route_url(page_url: nil)
-    return nil if page_url.nil?
+  def memberships_route_url(cursor: nil)
+    return nil if cursor.nil?
 
-    "/nrps/members?#{URI.encode_www_form(page_url: page_url)}"
+    "/nrps/members?#{URI.encode_www_form(cursor: cursor)}"
   end
 end
 
@@ -123,6 +154,7 @@ post "/lti/launch" do
     state: params.fetch("state")
   )
 
+  clear_nrps_follow_ups!
   session[:nrps_memberships_url] = launch.context_memberships_url
   session[:lti_deployment_id] = launch.deployment_id
 
@@ -148,9 +180,18 @@ get "/nrps/members" do
   halt 400, "No memberships URL in session. Complete an LTI launch first." unless memberships_url
 
   limit = integer_param(:limit)
-  page_url = normalized_param(:page_url)
+  halt 400, "page_url cannot be supplied directly; use the provided cursor path" if normalized_param(:page_url)
+
+  cursor = normalized_param(:cursor)
   role = normalized_param(:role)
   resource_link_id = normalized_param(:resource_link_id)
+
+  if cursor && (role || limit || resource_link_id)
+    halt 400, "cursor cannot be combined with role, limit, or resource_link_id"
+  end
+
+  page_url = fetch_nrps_follow_up(cursor)
+  halt 400, "Invalid or expired NRPS cursor" if cursor && page_url.nil?
 
   token_service = Lti::Advantage::Services::AccessToken.new(
     key_pair: TOOL_KEY_PAIR,
@@ -168,7 +209,8 @@ get "/nrps/members" do
 
   nrps = Lti::Advantage::Services::NamesRoleService.new(
     memberships_url: memberships_url,
-    access_token: access_token
+    access_token: access_token,
+    enforce_same_origin: true
   )
 
   begin
@@ -177,6 +219,7 @@ get "/nrps/members" do
              else
                nrps.memberships(role: role, limit: limit, resource_link_id: resource_link_id)
              end
+    delete_nrps_follow_up(cursor)
   rescue Lti::Advantage::Error => e
     halt 500, "Failed to fetch memberships: #{e.message}"
   end

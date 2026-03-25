@@ -60,9 +60,9 @@ module Lti
         # @param access_token [String] a valid bearer token with the NRPS scope
         # @param enforce_same_origin [Boolean] when +true+, reject follow-up page
         #   and differences URLs whose origin differs from the original
-        #   +memberships_url+; defaults to +false+ so platforms may paginate
-        #   across multiple origins
-        def initialize(memberships_url:, access_token:, enforce_same_origin: false)
+        #   +memberships_url+; defaults to +true+ so bearer tokens are not sent
+        #   to a different origin unless explicitly opted in
+        def initialize(memberships_url:, access_token:, enforce_same_origin: true)
           @memberships_url = normalize_memberships_url(memberships_url)
           @memberships_origin = request_origin(@memberships_url)
           @access_token = assert_presence("access_token", access_token)
@@ -92,8 +92,8 @@ module Lti
         #
         # @param url [String] fully-resolved memberships URL (may include query
         #   string from a +rel="next"+ link header). Cross-origin URLs are
-        #   allowed unless the service was initialized with
-        #   +enforce_same_origin: true+.
+        #   rejected unless the service was initialized with
+        #   +enforce_same_origin: false+.
         # @return [MembershipsResult]
         # @raise [Lti::Advantage::Error] on HTTP or parse failures
         def memberships_from_url(url)

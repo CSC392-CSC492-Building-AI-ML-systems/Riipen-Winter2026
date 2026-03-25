@@ -169,6 +169,30 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
     expect(last_response.body).to include("limit must be an integer")
   end
 
+  it "rejects raw page_url follow-up requests from the browser" do
+    launch_with_optional_nrps(memberships_url: "https://lms.example.com/sections/2923/memberships")
+
+    expect(Faraday).not_to receive(:post)
+    expect(Faraday).not_to receive(:get)
+
+    get "/nrps/members", { page_url: "https://attacker.example/steal-token" }
+
+    expect(last_response.status).to eq(400)
+    expect(last_response.body).to include("page_url cannot be supplied directly")
+  end
+
+  it "rejects invalid follow-up cursors before requesting a token" do
+    launch_with_optional_nrps(memberships_url: "https://lms.example.com/sections/2923/memberships")
+
+    expect(Faraday).not_to receive(:post)
+    expect(Faraday).not_to receive(:get)
+
+    get "/nrps/members", { cursor: "invalid-cursor" }
+
+    expect(last_response.status).to eq(400)
+    expect(last_response.body).to include("Invalid or expired NRPS cursor")
+  end
+
   it "returns 500 when access token exchange fails" do
     launch_with_optional_nrps(memberships_url: "https://lms.example.com/sections/2923/memberships")
 
@@ -248,11 +272,61 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
     expect(last_response).to be_ok
     page_one = JSON.parse(last_response.body)
     expect(page_one.fetch("next_page_url")).to eq(next_page_url)
+    expect(page_one.fetch("next_page_path")).to include("cursor=")
+    expect(page_one.fetch("next_page_path")).not_to include("page_url=")
 
     get page_one.fetch("next_page_path")
 
     expect(last_response).to be_ok
     page_two = JSON.parse(last_response.body)
     expect(page_two.fetch("members").first.fetch("user_id")).to eq("user-456")
+
+    get page_one.fetch("next_page_path")
+
+    expect(last_response.status).to eq(400)
+    expect(last_response.body).to include("Invalid or expired NRPS cursor")
+  end
+
+  it "clears stored follow-up cursors when a new launch succeeds" do
+    memberships_url = "https://lms.example.com/sections/2923/memberships"
+    next_page_url = "#{memberships_url}?page=2"
+
+    launch_with_optional_nrps(memberships_url: memberships_url)
+
+    allow(Faraday).to receive(:post).and_return(
+      double(
+        "token_resp",
+        status: 200,
+        body: { "access_token" => "roster-token", "token_type" => "Bearer" }.to_json
+      )
+    )
+    allow(Faraday).to receive(:get).and_return(
+      double(
+        "page_1",
+        success?: true,
+        body: {
+          "id" => memberships_url,
+          "context" => { "id" => "ctx-1", "title" => "Roster Demo" },
+          "members" => [{ "user_id" => "user-123", "roles" => ["Learner"], "status" => "Active" }]
+        }.to_json,
+        headers: {
+          "link" => "<#{next_page_url}>; rel=\"next\"",
+          "content-type" => Lti::Advantage::Services::NamesRoleService::MEDIA_TYPE
+        }
+      )
+    )
+
+    get "/nrps/members"
+    stale_path = JSON.parse(last_response.body).fetch("next_page_path")
+
+    launch_with_optional_nrps(memberships_url: memberships_url)
+
+    expect(Faraday).not_to receive(:post)
+    expect(Faraday).not_to receive(:get)
+
+    get stale_path
+
+    expect(last_response.status).to eq(400)
+    expect(last_response.body).to include("Invalid or expired NRPS cursor")
   end
 end

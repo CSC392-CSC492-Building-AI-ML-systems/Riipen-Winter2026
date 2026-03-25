@@ -263,7 +263,18 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
       expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /status must be one of/)
     end
 
-    it "allows page URLs on a different origin by default" do
+    it "rejects page URLs on a different origin by default" do
+      expect do
+        subject.memberships_from_url("https://cdn.lms.example.com/sections/2923/memberships?page=2")
+      end.to raise_error(Lti::Advantage::Error, /different origin/)
+    end
+
+    it "allows page URLs on a different origin when same-origin enforcement is disabled" do
+      permissive_service = described_class.new(
+        memberships_url: memberships_url,
+        access_token: access_token,
+        enforce_same_origin: false
+      )
       response_double = double(
         "resp",
         success?: true,
@@ -272,21 +283,9 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
       )
       allow(Faraday).to receive(:get).and_return(response_double)
 
-      result = subject.memberships_from_url("https://cdn.lms.example.com/sections/2923/memberships?page=2")
+      result = permissive_service.memberships_from_url("https://cdn.lms.example.com/sections/2923/memberships?page=2")
 
       expect(result.members.first.user_id).to eq("user-jane")
-    end
-
-    it "rejects page URLs on a different origin when same-origin enforcement is enabled" do
-      strict_service = described_class.new(
-        memberships_url: memberships_url,
-        access_token: access_token,
-        enforce_same_origin: true
-      )
-
-      expect do
-        strict_service.memberships_from_url("https://cdn.lms.example.com/sections/2923/memberships?page=2")
-      end.to raise_error(Lti::Advantage::Error, /different origin/)
     end
 
     it "rejects blank role filters" do
@@ -392,7 +391,7 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
       expect(result.next_page_url).to eq("#{memberships_url}?page=2")
     end
 
-    it "allows next links hosted on a different origin by default" do
+    it "rejects next links hosted on a different origin by default" do
       next_url = "https://cdn.lms.example.com/sections/2923/memberships?page=2"
       response_double = double(
         "resp",
@@ -405,32 +404,33 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
       )
       allow(Faraday).to receive(:get).and_return(response_double)
 
-      result = subject.memberships
+      expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /different origin/)
+    end
+
+    it "allows next links hosted on a different origin when same-origin enforcement is disabled" do
+      next_url = "https://cdn.lms.example.com/sections/2923/memberships?page=2"
+      permissive_service = described_class.new(
+        memberships_url: memberships_url,
+        access_token: access_token,
+        enforce_same_origin: false
+      )
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<#{next_url}>; rel=\"next\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      result = permissive_service.memberships
+
       expect(result.next_page_url).to eq(next_url)
     end
 
-    it "rejects next links hosted on a different origin when same-origin enforcement is enabled" do
-      next_url = "https://cdn.lms.example.com/sections/2923/memberships?page=2"
-      strict_service = described_class.new(
-        memberships_url: memberships_url,
-        access_token: access_token,
-        enforce_same_origin: true
-      )
-      response_double = double(
-        "resp",
-        success?: true,
-        body: build_membership_body.to_json,
-        headers: {
-          "link" => "<#{next_url}>; rel=\"next\"",
-          "content-type" => described_class::MEDIA_TYPE
-        }
-      )
-      allow(Faraday).to receive(:get).and_return(response_double)
-
-      expect { strict_service.memberships }.to raise_error(Lti::Advantage::Error, /different origin/)
-    end
-
-    it "allows differences links hosted on a different origin by default" do
+    it "rejects differences links hosted on a different origin by default" do
       diff_url = "https://cdn.lms.example.com/differences?since=1422554502"
       response_double = double(
         "resp",
@@ -443,29 +443,30 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
       )
       allow(Faraday).to receive(:get).and_return(response_double)
 
-      result = subject.memberships
+      expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /different origin/)
+    end
+
+    it "allows differences links hosted on a different origin when same-origin enforcement is disabled" do
+      diff_url = "https://cdn.lms.example.com/differences?since=1422554502"
+      permissive_service = described_class.new(
+        memberships_url: memberships_url,
+        access_token: access_token,
+        enforce_same_origin: false
+      )
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<#{diff_url}>; rel=\"differences\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      result = permissive_service.memberships
+
       expect(result.differences_url).to eq(diff_url)
-    end
-
-    it "rejects differences links hosted on a different origin when same-origin enforcement is enabled" do
-      diff_url = "https://cdn.lms.example.com/differences?since=1422554502"
-      strict_service = described_class.new(
-        memberships_url: memberships_url,
-        access_token: access_token,
-        enforce_same_origin: true
-      )
-      response_double = double(
-        "resp",
-        success?: true,
-        body: build_membership_body.to_json,
-        headers: {
-          "link" => "<#{diff_url}>; rel=\"differences\"",
-          "content-type" => described_class::MEDIA_TYPE
-        }
-      )
-      allow(Faraday).to receive(:get).and_return(response_double)
-
-      expect { strict_service.memberships }.to raise_error(Lti::Advantage::Error, /different origin/)
     end
 
     it "raises an Error when the Link header is malformed" do

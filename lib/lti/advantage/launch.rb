@@ -88,6 +88,8 @@ module Lti
         return [] unless versions.is_a?(Array)
 
         versions.filter_map do |version|
+          next unless version.is_a?(String)
+
           normalize_optional_string(version)
         end
       end

@@ -247,7 +247,11 @@ module Lti
         raise ValidationError, "#{field_name} must be an array" unless value.is_a?(Array)
 
         value.each_with_index do |entry, index|
-          next unless entry.to_s.strip.empty?
+          unless entry.is_a?(String)
+            raise ValidationError, "#{field_name} entry at index #{index} must be a non-empty string"
+          end
+
+          next unless entry.strip.empty?
 
           raise ValidationError, "#{field_name} entry at index #{index} must be a non-empty string"
         end

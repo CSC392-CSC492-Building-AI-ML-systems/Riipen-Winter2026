@@ -133,6 +133,21 @@ RSpec.describe "LTI launch validation" do
     end.to raise_error(Lti::Advantage::ValidationError, /NRPS service_versions must be an array/)
   end
 
+  it "rejects NRPS claims with non-string service_versions entries" do
+    payload = base_payload.merge(
+      Lti::Advantage::Launch::NRPS_CLAIM => {
+        "context_memberships_url" => nrps_claim.fetch("context_memberships_url"),
+        "service_versions" => [2.0]
+      }
+    )
+    malformed_nrps_token = JWT.encode(payload, private_key, "RS256", kid: "platform-kid")
+
+    expect do
+      client.validate_launch!(id_token: malformed_nrps_token, state: "state-123")
+    end.to raise_error(Lti::Advantage::ValidationError,
+                       /NRPS service_versions entry at index 0 must be a non-empty string/)
+  end
+
   it "allows anonymous launches with no sub claim" do
     payload = base_payload.dup
     payload.delete("sub")
