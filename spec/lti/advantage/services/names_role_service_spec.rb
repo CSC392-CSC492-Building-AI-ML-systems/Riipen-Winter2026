@@ -61,7 +61,7 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
         "resp",
         success?: true,
         body: build_membership_body(members: [jane_member, bob_member]).to_json,
-        headers: { "link" => nil }
+        headers: { "link" => nil, "content-type" => described_class::MEDIA_TYPE }
       )
 
       allow(Faraday).to receive(:get) do |_url, &block|
@@ -91,7 +91,7 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
         "resp",
         success?: true,
         body: build_membership_body(members: [jane_member]).to_json,
-        headers: { "link" => "" }
+        headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
       )
 
       allow(Faraday).to receive(:get) do |url, &_block|
@@ -116,7 +116,7 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
         "resp",
         success?: true,
         body: build_membership_body.to_json,
-        headers: { "link" => "" }
+        headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
       )
 
       allow(Faraday).to receive(:get) do |url, &_block|
@@ -141,10 +141,73 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
 
     it "raises an Error on invalid JSON" do
       allow(Faraday).to receive(:get).and_return(
-        double("resp", success?: true, body: "not json", headers: { "link" => "" })
+        double(
+          "resp",
+          success?: true,
+          body: "not json",
+          headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
+        )
       )
 
       expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /parse/)
+    end
+
+    it "raises an Error when the response content type is unexpected" do
+      allow(Faraday).to receive(:get).and_return(
+        double(
+          "resp",
+          success?: true,
+          body: build_membership_body.to_json,
+          headers: { "link" => "", "content-type" => "application/json" }
+        )
+      )
+
+      expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /content type/)
+    end
+
+    it "raises an Error when the response body is not an object" do
+      allow(Faraday).to receive(:get).and_return(
+        double(
+          "resp",
+          success?: true,
+          body: [jane_member].to_json,
+          headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
+        )
+      )
+
+      expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /JSON object/)
+    end
+
+    it "raises an Error when members is not an array" do
+      allow(Faraday).to receive(:get).and_return(
+        double(
+          "resp",
+          success?: true,
+          body: build_membership_body.merge("members" => {}).to_json,
+          headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
+        )
+      )
+
+      expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /members must be an array/)
+    end
+
+    it "raises an Error when a member entry is not an object" do
+      allow(Faraday).to receive(:get).and_return(
+        double(
+          "resp",
+          success?: true,
+          body: build_membership_body(members: ["bad-member"]).to_json,
+          headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
+        )
+      )
+
+      expect { subject.memberships }.to raise_error(Lti::Advantage::Error, /member at index 0/)
+    end
+
+    it "rejects pagination URLs on a different origin" do
+      expect do
+        subject.memberships_from_url("https://evil.example.com/sections/2923/memberships?page=2")
+      end.to raise_error(Lti::Advantage::Error, /different origin/)
     end
   end
 
@@ -155,7 +218,7 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
         "resp",
         success?: true,
         body: build_membership_body(members: [jane_member]).to_json,
-        headers: { "link" => "<#{next_url}>; rel=\"next\"" }
+        headers: { "link" => "<#{next_url}>; rel=\"next\"", "content-type" => described_class::MEDIA_TYPE }
       )
       allow(Faraday).to receive(:get).and_return(response_double)
 
@@ -168,7 +231,7 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
         "resp",
         success?: true,
         body: build_membership_body(members: [jane_member]).to_json,
-        headers: { "link" => "" }
+        headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
       )
       allow(Faraday).to receive(:get).and_return(response_double)
 
@@ -182,12 +245,32 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
         "resp",
         success?: true,
         body: build_membership_body.to_json,
-        headers: { "link" => "<#{diff_url}>; rel=\"differences\"" }
+        headers: {
+          "link" => "<#{diff_url}>; rel=\"differences\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
       )
       allow(Faraday).to receive(:get).and_return(response_double)
 
       result = subject.memberships
       expect(result.differences_url).to eq(diff_url)
+    end
+
+    it "parses link headers with quoted commas and semicolons" do
+      next_url = "#{memberships_url}?p=2"
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<#{next_url}>; rel=\"next\"; title=\"Roster, page 2; learners\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      result = subject.memberships
+      expect(result.next_page_url).to eq(next_url)
     end
   end
 
@@ -199,13 +282,13 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
         "resp1",
         success?: true,
         body: build_membership_body(members: [jane_member]).to_json,
-        headers: { "link" => "<#{page2_url}>; rel=\"next\"" }
+        headers: { "link" => "<#{page2_url}>; rel=\"next\"", "content-type" => described_class::MEDIA_TYPE }
       )
       page2_resp = double(
         "resp2",
         success?: true,
         body: build_membership_body(members: [bob_member]).to_json,
-        headers: { "link" => "" }
+        headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
       )
 
       call_count = 0
@@ -226,7 +309,7 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
         "resp",
         success?: true,
         body: build_membership_body(members: [jane_member]).to_json,
-        headers: { "link" => "" }
+        headers: { "link" => "", "content-type" => described_class::MEDIA_TYPE }
       )
 
       allow(Faraday).to receive(:get) do |url, &_block|

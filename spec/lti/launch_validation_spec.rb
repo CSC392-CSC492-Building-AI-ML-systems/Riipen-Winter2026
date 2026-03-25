@@ -56,6 +56,13 @@ RSpec.describe "LTI launch validation" do
     }
   end
 
+  let(:nrps_claim) do
+    {
+      "context_memberships_url" => "https://platform.example/api/lti/courses/42/names_and_roles",
+      "service_versions" => ["2.0"]
+    }
+  end
+
   let(:id_token) do
     JWT.encode(base_payload, private_key, "RS256", kid: "platform-kid")
   end
@@ -75,6 +82,34 @@ RSpec.describe "LTI launch validation" do
     expect(launch.deployment_id).to eq("deployment-123")
     expect(launch.resource_link_id).to eq("resource-42")
     expect(launch.roles).to include("http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor")
+  end
+
+  it "propagates NRPS claim accessors from a validated launch" do
+    payload = base_payload.merge(Lti::Advantage::Launch::NRPS_CLAIM => nrps_claim)
+    nrps_token = JWT.encode(payload, private_key, "RS256", kid: "platform-kid")
+
+    launch = client.validate_launch!(id_token: nrps_token, state: "state-123")
+
+    expect(launch.nrps_claim).to eq(nrps_claim)
+    expect(launch.context_memberships_url).to eq(nrps_claim.fetch("context_memberships_url"))
+    expect(launch.nrps_service_versions).to eq(["2.0"])
+    expect(launch.nrps_available?).to be true
+  end
+
+  it "treats malformed NRPS claims as unavailable after launch validation" do
+    payload = base_payload.merge(
+      Lti::Advantage::Launch::NRPS_CLAIM => {
+        "context_memberships_url" => "   ",
+        "service_versions" => "2.0"
+      }
+    )
+    malformed_nrps_token = JWT.encode(payload, private_key, "RS256", kid: "platform-kid")
+
+    launch = client.validate_launch!(id_token: malformed_nrps_token, state: "state-123")
+
+    expect(launch.context_memberships_url).to be_nil
+    expect(launch.nrps_service_versions).to eq([])
+    expect(launch.nrps_available?).to be false
   end
 
   it "allows anonymous launches with no sub claim" do

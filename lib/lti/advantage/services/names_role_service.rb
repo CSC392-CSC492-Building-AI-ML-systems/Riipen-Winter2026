@@ -54,8 +54,9 @@ module Lti
         #   NRPS launch claim
         # @param access_token [String] a valid bearer token with the NRPS scope
         def initialize(memberships_url:, access_token:)
-          @memberships_url = memberships_url
-          @access_token    = access_token
+          @memberships_url = normalize_memberships_url(memberships_url)
+          @memberships_origin = request_origin(@memberships_url)
+          @access_token = access_token
         end
 
         # Fetches memberships from the service.
@@ -85,7 +86,9 @@ module Lti
         # @return [MembershipsResult]
         # @raise [Lti::Advantage::Error] on HTTP or parse failures
         def memberships_from_url(url)
-          response = Faraday.get(url) do |req|
+          request_url = normalize_request_url(url)
+
+          response = Faraday.get(request_url) do |req|
             req.headers["Authorization"] = "Bearer #{@access_token}"
             req.headers["Accept"]        = MEDIA_TYPE
           end
@@ -121,9 +124,13 @@ module Lti
         # @param response [Faraday::Response]
         # @return [MembershipsResult]
         def parse_response(response)
+          validate_content_type!(response)
           body = parse_json_body(response.body)
+          validate_membership_container!(body)
 
-          members = Array(body["members"]).map do |raw|
+          members = body.fetch("members").each_with_index.map do |raw, index|
+            raise Error, "NRPS member at index #{index} must be an object" unless raw.is_a?(Hash)
+
             Membership.new(raw)
           end
 
@@ -144,17 +151,9 @@ module Lti
         #   "differences")
         # @return [String, nil]
         def extract_link(header, rel)
-          return nil if header.nil? || header.empty?
-
-          # Each entry looks like: <https://...>; rel="next"
-          header.split(",").each do |entry|
-            url_part, *params = entry.strip.split(";")
-            url = url_part.strip.delete_prefix("<").delete_suffix(">")
-
-            params.each do |param|
-              key, value = param.strip.split("=", 2)
-              return url if key.strip == "rel" && value&.delete('"') == rel
-            end
+          parse_link_header(header).each do |link|
+            relation_types = link.fetch(:params).fetch("rel", "").split(/\s+/)
+            return link.fetch(:url) if relation_types.include?(rel)
           end
 
           nil
@@ -181,6 +180,176 @@ module Lti
           else
             JSON.parse(body.to_s)
           end
+        end
+
+        def normalize_memberships_url(url)
+          uri = parse_uri(url, field_name: "memberships_url")
+          raise Error, "memberships_url must be an absolute HTTP(S) URL" unless absolute_http_uri?(uri)
+
+          uri.to_s
+        end
+
+        def normalize_request_url(url)
+          uri = parse_uri(url, field_name: "request URL")
+          raise Error, "NRPS request URL must be an absolute HTTP(S) URL" unless absolute_http_uri?(uri)
+
+          if request_origin(uri.to_s) != @memberships_origin
+            raise Error, "Refusing to send NRPS token to a different origin"
+          end
+
+          uri.to_s
+        end
+
+        def parse_uri(value, field_name:)
+          URI.parse(value.to_s)
+        rescue URI::InvalidURIError => e
+          raise Error, "Invalid #{field_name}: #{e.message}"
+        end
+
+        def absolute_http_uri?(uri)
+          uri.is_a?(URI::HTTP) && !uri.host.nil?
+        end
+
+        def request_origin(url)
+          uri = URI.parse(url)
+          "#{uri.scheme}://#{uri.host}:#{uri.port}"
+        end
+
+        def validate_content_type!(response)
+          content_type = header_value(response.headers, "content-type")
+          expected_type = MEDIA_TYPE
+          actual_type = content_type.to_s.split(";", 2).first.to_s.strip
+
+          return if actual_type == expected_type
+
+          raise Error, "Unexpected NRPS content type: #{content_type || "missing"}"
+        end
+
+        def validate_membership_container!(body)
+          raise Error, "NRPS response body must be a JSON object" unless body.is_a?(Hash)
+
+          members = body["members"]
+          raise Error, "NRPS response members must be an array" unless members.is_a?(Array)
+
+          context = body["context"]
+          return if context.nil? || context.is_a?(Hash)
+
+          raise Error, "NRPS response context must be an object"
+        end
+
+        def header_value(headers, name)
+          return nil unless headers.respond_to?(:each)
+
+          pair = headers.find do |key, _value|
+            key.to_s.casecmp?(name)
+          end
+          pair&.last
+        end
+
+        def parse_link_header(header)
+          return [] if header.nil? || header.empty?
+
+          entries = []
+          index = 0
+
+          while index < header.length
+            index = skip_link_delimiters(header, index)
+            break if index >= header.length
+            return [] unless header[index] == "<"
+
+            url, index = parse_link_url(header, index)
+            params, index = parse_link_params(header, index)
+            entries << { url: url, params: params }
+          end
+
+          entries
+        rescue ArgumentError
+          []
+        end
+
+        def skip_link_delimiters(header, index)
+          index += 1 while index < header.length && [",", " ", "\t"].include?(header[index])
+
+          index
+        end
+
+        def parse_link_url(header, index)
+          closing_index = header.index(">", index + 1)
+          raise ArgumentError, "Malformed Link header" if closing_index.nil?
+
+          [header[(index + 1)...closing_index], closing_index + 1]
+        end
+
+        def parse_link_params(header, index)
+          params = {}
+
+          loop do
+            index = skip_optional_whitespace(header, index)
+            break unless index < header.length && header[index] == ";"
+
+            index += 1
+            index = skip_optional_whitespace(header, index)
+            name, value, index = parse_link_param(header, index)
+            params[name] = value
+          end
+
+          [params, index]
+        end
+
+        def skip_optional_whitespace(header, index)
+          index += 1 while index < header.length && [" ", "\t"].include?(header[index])
+
+          index
+        end
+
+        def parse_link_param(header, index)
+          name_start = index
+          index += 1 while index < header.length && !["=", ";", ","].include?(header[index])
+
+          name = header[name_start...index].to_s.strip.downcase
+          raise ArgumentError, "Malformed Link header" if name.empty?
+
+          return [name, "", index] unless index < header.length && header[index] == "="
+
+          index += 1
+          index = skip_optional_whitespace(header, index)
+          value, index = parse_link_param_value(header, index)
+          [name, value, index]
+        end
+
+        def parse_link_param_value(header, index)
+          return ["", index] if index >= header.length
+
+          if header[index] == '"'
+            parse_quoted_link_param_value(header, index + 1)
+          else
+            value_start = index
+            index += 1 while index < header.length && ![";", ","].include?(header[index])
+
+            [header[value_start...index].to_s.strip, index]
+          end
+        end
+
+        def parse_quoted_link_param_value(header, index)
+          value = +""
+
+          while index < header.length
+            char = header[index]
+            if char == "\\"
+              index += 1
+              raise ArgumentError, "Malformed Link header" if index >= header.length
+
+              value << header[index]
+            elsif char == '"'
+              return [value, index + 1]
+            else
+              value << char
+            end
+
+            index += 1
+          end
+
+          raise ArgumentError, "Malformed Link header"
         end
       end
     end

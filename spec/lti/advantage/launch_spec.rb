@@ -79,6 +79,45 @@ RSpec.describe Lti::Advantage::Launch do
       expect(launch.nrps_available?).to be true
     end
 
+    it "returns false when the memberships URL is blank" do
+      launch = described_class.new(
+        payload: payload_with_nrps.merge(
+          described_class::NRPS_CLAIM => nrps_claim_data.merge("context_memberships_url" => "   ")
+        ),
+        header: {},
+        registration: registration
+      )
+
+      expect(launch.context_memberships_url).to be_nil
+      expect(launch.nrps_available?).to be false
+    end
+
+    it "returns false when the platform does not advertise a supported NRPS version" do
+      launch = described_class.new(
+        payload: payload_with_nrps.merge(
+          described_class::NRPS_CLAIM => nrps_claim_data.merge("service_versions" => ["1.0"])
+        ),
+        header: {},
+        registration: registration
+      )
+
+      expect(launch.nrps_service_versions).to eq(["1.0"])
+      expect(launch.nrps_available?).to be false
+    end
+
+    it "treats malformed NRPS claims as unavailable" do
+      launch = described_class.new(
+        payload: payload_with_nrps.merge(described_class::NRPS_CLAIM => "not-an-object"),
+        header: {},
+        registration: registration
+      )
+
+      expect(launch.nrps_claim).to be_nil
+      expect(launch.context_memberships_url).to be_nil
+      expect(launch.nrps_service_versions).to eq([])
+      expect(launch.nrps_available?).to be false
+    end
+
     it "returns false when the NRPS claim is absent" do
       launch = described_class.new(payload: payload_without_nrps, header: {}, registration: registration)
       expect(launch.nrps_available?).to be false

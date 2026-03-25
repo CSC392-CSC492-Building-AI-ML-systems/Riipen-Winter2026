@@ -13,6 +13,7 @@ module Lti
       attr_reader :payload, :header, :registration
 
       NRPS_CLAIM = "https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice"
+      SUPPORTED_NRPS_SERVICE_VERSIONS = ["2.0"].freeze
 
       def initialize(payload:, header:, registration:)
         @payload = payload
@@ -68,24 +69,44 @@ module Lti
       # Returns the raw Names and Role Provisioning Service claim hash,
       # or nil if the LMS did not include NRPS in the launch token.
       def nrps_claim
-        payload[NRPS_CLAIM]
+        claim = payload[NRPS_CLAIM]
+        claim.is_a?(Hash) ? claim : nil
       end
 
       # Returns the context memberships URL to pass to NamesRoleService.
       # Returns nil if NRPS is not available for this launch.
       def context_memberships_url
-        nrps_claim&.fetch("context_memberships_url", nil)
+        normalize_optional_string(nrps_claim&.fetch("context_memberships_url", nil))
       end
 
       # Returns the NRPS service versions supported by the LMS, e.g. ["2.0"].
       # Returns an empty array if the NRPS claim is absent.
       def nrps_service_versions
-        Array(nrps_claim&.fetch("service_versions", nil))
+        versions = nrps_claim&.fetch("service_versions", nil)
+        return [] unless versions.is_a?(Array)
+
+        versions.filter_map do |version|
+          normalize_optional_string(version)
+        end
       end
 
-      # Returns true when the launch includes a valid NRPS memberships URL.
+      # Returns true when the launch includes a valid NRPS memberships URL and
+      # advertises a supported NRPS service version.
       def nrps_available?
-        !context_memberships_url.nil?
+        return false if context_memberships_url.nil?
+
+        (nrps_service_versions & SUPPORTED_NRPS_SERVICE_VERSIONS).any?
+      end
+
+      private
+
+      def normalize_optional_string(value)
+        return nil if value.nil?
+
+        string_value = value.to_s.strip
+        return nil if string_value.empty?
+
+        string_value
       end
     end
   end
