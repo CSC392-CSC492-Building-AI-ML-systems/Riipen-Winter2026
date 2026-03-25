@@ -12,8 +12,8 @@ module Lti
     # allow one or many deployment ids.
     class Registration
       # OIDC issuer identifier used for +iss+ claim verification.
-      attr_reader :issuer, :client_id, :authorization_endpoint, :jwks_url, :token_endpoint,
-                  :deployment_ids, :algorithms
+      attr_reader :issuer, :client_id, :authorization_endpoint, :token_endpoint,
+                  :token_audience, :jwks_url, :deployment_ids, :algorithms
 
       # Builds a platform registration.
       #
@@ -27,13 +27,14 @@ module Lti
       # algorithms:: Accepted JWT signature algorithms. Defaults to +RS256+.
       def initialize(
         issuer:, client_id:, authorization_endpoint:, jwks_url:, token_endpoint: nil,
-        deployment_ids: [], algorithms: ["RS256"]
+        token_audience: nil, deployment_ids: [], algorithms: ["RS256"]
       )
         @issuer = assert_presence("issuer", issuer)
         @client_id = assert_presence("client_id", client_id)
         @authorization_endpoint = assert_presence("authorization_endpoint", authorization_endpoint)
         @jwks_url = assert_presence("jwks_url", jwks_url)
         @token_endpoint = normalize_optional_http_url("token_endpoint", token_endpoint)
+        @token_audience = optional_string(token_audience)
         @deployment_ids = Array(deployment_ids).map(&:to_s).freeze
         @algorithms = Array(algorithms).map(&:to_s).freeze
       end
@@ -77,6 +78,12 @@ module Lti
         uri.to_s
       rescue URI::InvalidURIError => e
         raise ArgumentError, "Invalid #{name}: #{e.message}"
+
+      def optional_string(value)
+        stripped = value.to_s.strip
+        return nil if stripped.empty?
+
+        stripped
       end
     end
   end

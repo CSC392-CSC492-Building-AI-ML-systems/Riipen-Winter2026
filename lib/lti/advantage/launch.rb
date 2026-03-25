@@ -63,6 +63,13 @@ module Lti
         resource_link["id"]
       end
 
+      def ags_endpoint
+        claim = payload[Claims::AGS_ENDPOINT]
+        return nil if claim.nil?
+
+        AGS::Endpoint.new(claim)
+      end
+
       # Convenience accessor for any arbitrary claim URI or key.
       def [](claim)
         payload[claim]
