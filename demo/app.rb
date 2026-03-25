@@ -2,6 +2,7 @@
 
 require "sinatra"
 require "dotenv/load"
+require "fileutils"
 require_relative "../lib/lti/advantage"
 
 # Bind to 0.0.0.0 to listen on all network interfaces
@@ -16,6 +17,33 @@ before do
   puts "Params: #{params.inspect}" if params.any?
 end
 
+helpers do
+  def escape_html(value)
+    Rack::Utils.escape_html(value.to_s)
+  end
+
+  def summarized_roles(roles)
+    Array(roles).map { |role| escape_html(role.to_s.split("#").last) }.join(", ")
+  end
+
+  def fetch_nrps_memberships(launch)
+    token_service = Lti::Advantage::Services::AccessToken.new(
+      key_pair: TOOL_KEY_PAIR,
+      client_id: launch.registration.client_id,
+      token_endpoint: launch.registration.token_endpoint,
+      scope: Lti::Advantage::Services::NamesRoleService::SCOPE,
+      deployment_id: launch.deployment_id
+    )
+    access_token = token_service.fetch
+
+    Lti::Advantage::Services::NamesRoleService.new(
+      memberships_url: launch.context_memberships_url,
+      access_token: access_token,
+      enforce_same_origin: true
+    ).memberships
+  end
+end
+
 # LTI Configuration (Loaded from .env)
 CLIENT_ID       = ENV["CLIENT_ID"]       || "10000000000001"
 LMS_BROWSER_URL = ENV["LMS_BROWSER_URL"] || "http://canvas.docker"
@@ -23,16 +51,34 @@ TOOL_HOST       = ENV["TOOL_HOST"]       || "127.0.0.1:4567"
 LMS_ISSUER      = ENV["LMS_ISSUER"]      || "http://127.0.0.1:3000"
 LMS_AUTH_URL    = ENV["LMS_AUTH_URL"]    || "#{LMS_BROWSER_URL}/api/lti/authorize_redirect"
 LMS_JWKS_URL    = ENV["LMS_JWKS_URL"]    || "#{LMS_ISSUER}/api/lti/security/jwks"
+LMS_TOKEN_ENDPOINT = ENV["LMS_TOKEN_ENDPOINT"] || "#{LMS_BROWSER_URL}/login/oauth2/token"
 DEPLOYMENT_ID   = ENV["LTI_DEPLOYMENT_ID"] || "test-deployment-123"
+TOOL_KEY_KID    = ENV["TOOL_KEY_KID"] || "demo-tool-key"
 TOOL_LAUNCH_URL = "http://#{TOOL_HOST}/lti/launch".freeze
+DEFAULT_TOOL_PRIVATE_KEY_PATH = File.expand_path("../tmp/demo-tool-private-key.pem", __dir__).freeze
+
+TOOL_PRIVATE_KEY_PEM = if ENV["TOOL_PRIVATE_KEY_PATH"]
+                         File.read(ENV.fetch("TOOL_PRIVATE_KEY_PATH"))
+                       elsif ENV["TOOL_PRIVATE_KEY_PEM"]
+                         ENV["TOOL_PRIVATE_KEY_PEM"]&.gsub("\\n", "\n")
+                       elsif File.exist?(DEFAULT_TOOL_PRIVATE_KEY_PATH)
+                         File.read(DEFAULT_TOOL_PRIVATE_KEY_PATH)
+                       else
+                         generated_tool_key_pair = Lti::Advantage::KeyPair.new(nil, kid: TOOL_KEY_KID)
+                         FileUtils.mkdir_p(File.dirname(DEFAULT_TOOL_PRIVATE_KEY_PATH))
+                         File.write(DEFAULT_TOOL_PRIVATE_KEY_PATH, generated_tool_key_pair.to_pem)
+                         File.chmod(0o600, DEFAULT_TOOL_PRIVATE_KEY_PATH)
+                         generated_tool_key_pair.to_pem
+                       end
 
 # Initialize the tool's RSA key pair
-TOOL_KEY_PAIR = Lti::Advantage::KeyPair.new
+TOOL_KEY_PAIR = Lti::Advantage::KeyPair.new(TOOL_PRIVATE_KEY_PEM, kid: TOOL_KEY_KID)
 LTI_REGISTRATION = Lti::Advantage::Registration.new(
   issuer: LMS_ISSUER,
   client_id: CLIENT_ID,
   authorization_endpoint: LMS_AUTH_URL,
   jwks_url: LMS_JWKS_URL,
+  token_endpoint: LMS_TOKEN_ENDPOINT,
   deployment_ids: [DEPLOYMENT_ID]
 )
 LTI_CLIENT = Lti::Advantage::Client.new(registrations: [LTI_REGISTRATION])
@@ -41,6 +87,11 @@ LTI_CLIENT = Lti::Advantage::Client.new(registrations: [LTI_REGISTRATION])
 get "/lti/jwks" do
   content_type :json
   { keys: [TOOL_KEY_PAIR.public_jwk] }.to_json
+end
+
+get "/lti/jwk" do
+  content_type :json
+  TOOL_KEY_PAIR.public_jwk.to_json
 end
 
 # 1. Login Initiation (OIDC Initiation)
@@ -66,7 +117,19 @@ post "/lti/launch" do
     state: params.fetch("state")
   )
 
-  "Welcome, student! Your ID is: #{launch.subject || "anonymous"}. Launch successful!"
+  memberships_result = nil
+  nrps_error = nil
+
+  if launch.nrps_available?
+    begin
+      memberships_result = fetch_nrps_memberships(launch)
+    rescue Lti::Advantage::Error => e
+      nrps_error = e.message
+    end
+  end
+
+  content_type :html
+  erb :launch_result, locals: { launch: launch, memberships_result: memberships_result, nrps_error: nrps_error }
 rescue KeyError
   halt 400, "Missing id_token or state"
 rescue Lti::Advantage::ReplayError => e
@@ -75,6 +138,14 @@ rescue Lti::Advantage::JwtVerificationError => e
   halt 401, "JWT verification failed: #{e.message}"
 rescue Lti::Advantage::ValidationError => e
   halt 400, "Launch validation failed: #{e.message}"
+end
+
+get "/nrps/members" do
+  halt 410,
+       [
+         "This demo now fetches the first NRPS roster page during /lti/launch.",
+         "Launch the tool from Canvas to view the embedded roster."
+       ].join(" ")
 end
 
 __END__
@@ -92,5 +163,88 @@ __END__
     <% end %>
     <noscript><input type="submit" value="Click here to continue"></noscript>
   </form>
+</body>
+</html>
+
+@@launch_result
+<!DOCTYPE html>
+<html>
+<head>
+  <title>LTI Launch Demo</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      line-height: 1.5;
+      margin: 2rem;
+    }
+
+    table {
+      border-collapse: collapse;
+      margin-top: 1rem;
+      width: 100%;
+    }
+
+    th,
+    td {
+      border: 1px solid #d1d5db;
+      padding: 0.5rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    code {
+      background: #f3f4f6;
+      border-radius: 0.25rem;
+      padding: 0.1rem 0.3rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Launch successful</h1>
+  <p>Welcome, student! Your ID is: <strong><%= escape_html(launch.subject || "anonymous") %></strong>.</p>
+  <p>Deployment ID: <code><%= escape_html(launch.deployment_id) %></code></p>
+  <p>Roles: <%= summarized_roles(launch.roles) %></p>
+
+  <% if memberships_result %>
+    <h2>NRPS roster</h2>
+    <p>Context: <strong><%= escape_html(memberships_result.context&.fetch("title", nil) || "n/a") %></strong></p>
+
+    <% if memberships_result.members.empty? %>
+      <p>No members were returned for this launch.</p>
+    <% else %>
+      <table>
+        <thead>
+          <tr>
+            <th>User ID</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Roles</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% memberships_result.members.each do |member| %>
+            <tr>
+              <td><%= escape_html(member.user_id) %></td>
+              <td><%= escape_html(member.name || "(hidden)") %></td>
+              <td><%= escape_html(member.email || "(hidden)") %></td>
+              <td><%= summarized_roles(member.roles) %></td>
+              <td><%= escape_html(member.status) %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    <% end %>
+
+    <% if memberships_result.next_page_url || memberships_result.differences_url %>
+      <p>This embedded demo renders only the first NRPS page during launch.</p>
+    <% end %>
+  <% elsif nrps_error %>
+    <h2>NRPS roster unavailable</h2>
+    <p>The launch advertised NRPS, but the demo could not fetch the roster.</p>
+    <p><code><%= escape_html(nrps_error) %></code></p>
+  <% else %>
+    <p>This launch did not include the NRPS claim.</p>
+  <% end %>
 </body>
 </html>

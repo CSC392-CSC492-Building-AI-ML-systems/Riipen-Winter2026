@@ -13,6 +13,9 @@ require_relative "advantage/launch"
 require_relative "advantage/launch_validator"
 require_relative "advantage/client"
 require_relative "advantage/key_pair"
+require_relative "advantage/membership"
+require_relative "advantage/services/access_token"
+require_relative "advantage/services/names_role_service"
 
 # LTI namespace for interoperability-related gems.
 module Lti

@@ -1,6 +1,6 @@
 # Lti::Advantage
 
-`lti-advantage` provides a focused implementation of the LTI 1.3 core launch flow for Ruby applications.
+`lti-advantage` provides a focused implementation of the LTI 1.3 core launch flow for Ruby applications, with initial support for LTI Advantage NRPS roster access.
 
 Implemented core behaviors:
 
@@ -9,6 +9,9 @@ Implemented core behaviors:
 - Validate signed `id_token` launch messages against platform JWKS
 - Enforce required LTI 1.3 resource link claims
 - Protect against replay attacks with one-time `state` and `nonce` values
+- Read the NRPS claim from a validated launch
+- Request OAuth access tokens for LTI services with JWT client assertions
+- Fetch course memberships through the NRPS v2 memberships endpoint
 
 ## Installation
 
@@ -34,6 +37,7 @@ registration = Lti::Advantage::Registration.new(
   client_id: "client-123",
   authorization_endpoint: "https://platform.example/oidc/auth",
   jwks_url: "https://platform.example/.well-known/jwks.json",
+  token_endpoint: "https://platform.example/login/oauth2/token",
   deployment_ids: ["deployment-123"]
 )
 
@@ -81,9 +85,40 @@ Validation includes:
 
 Anonymous launches are supported (`sub` may be omitted).
 
+### 3) Access NRPS memberships
+
+```ruby
+return unless launch.nrps_available?
+
+token_endpoint = launch.registration.token_endpoint
+raise "Configure registration.token_endpoint for NRPS" if token_endpoint.nil?
+
+access_token = Lti::Advantage::Services::AccessToken.new(
+  key_pair: TOOL_KEY_PAIR,
+  client_id: launch.registration.client_id,
+  token_endpoint: token_endpoint,
+  scope: Lti::Advantage::Services::NamesRoleService::SCOPE,
+  deployment_id: launch.deployment_id
+).fetch
+
+memberships = Lti::Advantage::Services::NamesRoleService.new(
+  memberships_url: launch.context_memberships_url,
+  access_token: access_token
+)
+
+result = memberships.memberships(role: "Learner", limit: 50)
+result.members.each do |member|
+  puts [member.user_id, member.name, member.roles].inspect
+end
+```
+
+`launch.nrps_available?` only reflects what the launch advertises: it checks for a valid `context_memberships_url` plus at least one supported NRPS service version. It does not verify your `Registration` configuration, token issuance, granted scopes, or downstream HTTP success.
+
+`AccessToken` uses the platform token endpoint configured on the selected `Registration`, and `NamesRoleService#memberships` normalizes short role filters like `"Learner"` to their IMS membership role URIs while validating `limit` and `resource_link_id`. `NamesRoleService#memberships_from_url` rejects cross-origin follow-up URLs by default so LMS bearer tokens stay scoped to the original NRPS origin; pass `enforce_same_origin: false` only if your platform legitimately paginates across multiple origins.
+
 ## Demo app and tool JWKS
 
-The Sinatra demo in `demo/app.rb` uses the new `Client` flow for login and launch validation while keeping `Lti::Advantage::KeyPair` to publish the tool's public key at `/lti/jwks`.
+The Sinatra demo in `demo/app.rb` uses the `Client` flow for login and launch validation, exchanges a JWT client assertion for an NRPS access token during launch, and renders the first NRPS roster page directly in the embedded launch response so the Canvas demo does not depend on browser session cookies. For local Canvas Docker setups, prefer a pasted `public_jwk` over an HTTP `public_jwk_url`; the demo exposes both `/lti/jwks` and a copy/paste-friendly `/lti/jwk` endpoint, and it persists a reusable dev private key under `tmp/demo-tool-private-key.pem` by default so the pasted JWK stays valid across restarts.
 
 ## API Documentation (RDoc)
 
