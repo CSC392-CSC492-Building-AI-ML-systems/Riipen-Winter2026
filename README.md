@@ -118,7 +118,7 @@ end
 
 ## Demo app and tool JWKS
 
-The Sinatra demo in `demo/app.rb` uses the `Client` flow for login and launch validation, stores the NRPS memberships URL only after a successful launch, exchanges a JWT client assertion for an NRPS access token, and proxies `next_page_url` / `differences_url` back through opaque server-side cursors so the LMS bearer token never needs to touch the browser and the browser never chooses the follow-up URL that receives it.
+The Sinatra demo in `demo/app.rb` uses the `Client` flow for login and launch validation, exchanges a JWT client assertion for an NRPS access token during launch, and renders the first NRPS roster page directly in the embedded launch response so the Canvas demo does not depend on browser session cookies. For local Canvas Docker setups, prefer a pasted `public_jwk` over an HTTP `public_jwk_url`; the demo exposes both `/lti/jwks` and a copy/paste-friendly `/lti/jwk` endpoint, and it persists a reusable dev private key under `tmp/demo-tool-private-key.pem` by default so the pasted JWK stays valid across restarts.
 
 ## API Documentation (RDoc)
 

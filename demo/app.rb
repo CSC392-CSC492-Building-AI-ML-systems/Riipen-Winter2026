@@ -2,8 +2,7 @@
 
 require "sinatra"
 require "dotenv/load"
-require "securerandom"
-require "uri"
+require "fileutils"
 require_relative "../lib/lti/advantage"
 
 # Bind to 0.0.0.0 to listen on all network interfaces
@@ -12,18 +11,6 @@ set :bind, "0.0.0.0"
 # Disable strict protection and frame options for local LTI testing
 set :protection, except: %i[http_origin remote_token session_hijacking frame_options host_authorization]
 
-# Allow cookies to be sent in an iframe (SameSite=None; Secure=True is usually required by modern browsers)
-# Note: Local iframe testing over HTTP still requires `SESSION_COOKIE_SECURE=false`.
-SESSION_SECRET = ENV["SESSION_SECRET"] || SecureRandom.hex(64)
-SESSION_COOKIE_SECURE = ENV.fetch("SESSION_COOKIE_SECURE", "false") == "true"
-
-use Rack::Session::Cookie,
-    key: "rack.session",
-    path: "/",
-    secret: SESSION_SECRET,
-    same_site: :none,
-    secure: SESSION_COOKIE_SECURE
-
 # Log every request to the terminal
 before do
   puts "Incoming Request: #{request.request_method} #{request.path_info}"
@@ -31,74 +18,29 @@ before do
 end
 
 helpers do
-  def normalized_param(name)
-    value = params[name]&.to_s&.strip
-    value.nil? || value.empty? ? nil : value
+  def escape_html(value)
+    Rack::Utils.escape_html(value.to_s)
   end
 
-  def integer_param(name)
-    value = normalized_param(name)
-    value ? Integer(value, 10) : nil
+  def summarized_roles(roles)
+    Array(roles).map { |role| escape_html(role.to_s.split("#").last) }.join(", ")
   end
 
-  def nrps_follow_ups
-    session[:nrps_follow_ups] ||= {}
-  end
+  def fetch_nrps_memberships(launch)
+    token_service = Lti::Advantage::Services::AccessToken.new(
+      key_pair: TOOL_KEY_PAIR,
+      client_id: launch.registration.client_id,
+      token_endpoint: launch.registration.token_endpoint,
+      scope: Lti::Advantage::Services::NamesRoleService::SCOPE,
+      deployment_id: launch.deployment_id
+    )
+    access_token = token_service.fetch
 
-  def clear_nrps_follow_ups!
-    session[:nrps_follow_ups] = {}
-  end
-
-  def store_nrps_follow_up(page_url)
-    return nil if page_url.nil?
-
-    cursor = SecureRandom.urlsafe_base64(24)
-    nrps_follow_ups[cursor] = page_url
-    cursor
-  end
-
-  def fetch_nrps_follow_up(cursor)
-    return nil if cursor.nil?
-
-    nrps_follow_ups[cursor]
-  end
-
-  def delete_nrps_follow_up(cursor)
-    return if cursor.nil?
-
-    nrps_follow_ups.delete(cursor)
-  end
-end
-
-helpers do
-  def memberships_response_body(result)
-    next_page_cursor = store_nrps_follow_up(result.next_page_url)
-    differences_cursor = store_nrps_follow_up(result.differences_url)
-
-    {
-      context: result.context,
-      members: result.members.map do |member|
-        {
-          user_id: member.user_id,
-          name: member.name,
-          email: member.email,
-          roles: member.roles,
-          status: member.status
-        }
-      end,
-      next_page_url: result.next_page_url,
-      differences_url: result.differences_url,
-      next_page_path: memberships_route_url(cursor: next_page_cursor),
-      differences_path: memberships_route_url(cursor: differences_cursor)
-    }
-  end
-end
-
-helpers do
-  def memberships_route_url(cursor: nil)
-    return nil if cursor.nil?
-
-    "/nrps/members?#{URI.encode_www_form(cursor: cursor)}"
+    Lti::Advantage::Services::NamesRoleService.new(
+      memberships_url: launch.context_memberships_url,
+      access_token: access_token,
+      enforce_same_origin: true
+    ).memberships
   end
 end
 
@@ -111,10 +53,26 @@ LMS_AUTH_URL    = ENV["LMS_AUTH_URL"]    || "#{LMS_BROWSER_URL}/api/lti/authoriz
 LMS_JWKS_URL    = ENV["LMS_JWKS_URL"]    || "#{LMS_ISSUER}/api/lti/security/jwks"
 LMS_TOKEN_ENDPOINT = ENV["LMS_TOKEN_ENDPOINT"] || "#{LMS_BROWSER_URL}/login/oauth2/token"
 DEPLOYMENT_ID   = ENV["LTI_DEPLOYMENT_ID"] || "test-deployment-123"
+TOOL_KEY_KID    = ENV["TOOL_KEY_KID"] || "demo-tool-key"
 TOOL_LAUNCH_URL = "http://#{TOOL_HOST}/lti/launch".freeze
+DEFAULT_TOOL_PRIVATE_KEY_PATH = File.expand_path("../tmp/demo-tool-private-key.pem", __dir__).freeze
+
+TOOL_PRIVATE_KEY_PEM = if ENV["TOOL_PRIVATE_KEY_PATH"]
+                         File.read(ENV.fetch("TOOL_PRIVATE_KEY_PATH"))
+                       elsif ENV["TOOL_PRIVATE_KEY_PEM"]
+                         ENV["TOOL_PRIVATE_KEY_PEM"]&.gsub("\\n", "\n")
+                       elsif File.exist?(DEFAULT_TOOL_PRIVATE_KEY_PATH)
+                         File.read(DEFAULT_TOOL_PRIVATE_KEY_PATH)
+                       else
+                         generated_tool_key_pair = Lti::Advantage::KeyPair.new(nil, kid: TOOL_KEY_KID)
+                         FileUtils.mkdir_p(File.dirname(DEFAULT_TOOL_PRIVATE_KEY_PATH))
+                         File.write(DEFAULT_TOOL_PRIVATE_KEY_PATH, generated_tool_key_pair.to_pem)
+                         File.chmod(0o600, DEFAULT_TOOL_PRIVATE_KEY_PATH)
+                         generated_tool_key_pair.to_pem
+                       end
 
 # Initialize the tool's RSA key pair
-TOOL_KEY_PAIR = Lti::Advantage::KeyPair.new
+TOOL_KEY_PAIR = Lti::Advantage::KeyPair.new(TOOL_PRIVATE_KEY_PEM, kid: TOOL_KEY_KID)
 LTI_REGISTRATION = Lti::Advantage::Registration.new(
   issuer: LMS_ISSUER,
   client_id: CLIENT_ID,
@@ -129,6 +87,11 @@ LTI_CLIENT = Lti::Advantage::Client.new(registrations: [LTI_REGISTRATION])
 get "/lti/jwks" do
   content_type :json
   { keys: [TOOL_KEY_PAIR.public_jwk] }.to_json
+end
+
+get "/lti/jwk" do
+  content_type :json
+  TOOL_KEY_PAIR.public_jwk.to_json
 end
 
 # 1. Login Initiation (OIDC Initiation)
@@ -154,16 +117,19 @@ post "/lti/launch" do
     state: params.fetch("state")
   )
 
-  clear_nrps_follow_ups!
-  session[:nrps_memberships_url] = launch.context_memberships_url
-  session[:lti_deployment_id] = launch.deployment_id
+  memberships_result = nil
+  nrps_error = nil
 
-  launch_message = "Welcome, student! Your ID is: #{launch.subject || "anonymous"}. Launch successful!"
   if launch.nrps_available?
-    "#{launch_message} NRPS memberships are available at /nrps/members."
-  else
-    "#{launch_message} This launch did not include the NRPS claim."
+    begin
+      memberships_result = fetch_nrps_memberships(launch)
+    rescue Lti::Advantage::Error => e
+      nrps_error = e.message
+    end
   end
+
+  content_type :html
+  erb :launch_result, locals: { launch: launch, memberships_result: memberships_result, nrps_error: nrps_error }
 rescue KeyError
   halt 400, "Missing id_token or state"
 rescue Lti::Advantage::ReplayError => e
@@ -174,62 +140,13 @@ rescue Lti::Advantage::ValidationError => e
   halt 400, "Launch validation failed: #{e.message}"
 end
 
-# rubocop:disable Metrics/BlockLength
 get "/nrps/members" do
-  memberships_url = session[:nrps_memberships_url]
-  halt 400, "No memberships URL in session. Complete an LTI launch first." unless memberships_url
-
-  limit = integer_param(:limit)
-  halt 400, "page_url cannot be supplied directly; use the provided cursor path" if normalized_param(:page_url)
-
-  cursor = normalized_param(:cursor)
-  role = normalized_param(:role)
-  resource_link_id = normalized_param(:resource_link_id)
-
-  if cursor && (role || limit || resource_link_id)
-    halt 400, "cursor cannot be combined with role, limit, or resource_link_id"
-  end
-
-  page_url = fetch_nrps_follow_up(cursor)
-  halt 400, "Invalid or expired NRPS cursor" if cursor && page_url.nil?
-
-  token_service = Lti::Advantage::Services::AccessToken.new(
-    key_pair: TOOL_KEY_PAIR,
-    client_id: CLIENT_ID,
-    token_endpoint: LTI_REGISTRATION.token_endpoint,
-    scope: Lti::Advantage::Services::NamesRoleService::SCOPE,
-    deployment_id: session[:lti_deployment_id]
-  )
-
-  begin
-    access_token = token_service.fetch
-  rescue Lti::Advantage::Error => e
-    halt 500, "Failed to obtain access token: #{e.message}"
-  end
-
-  nrps = Lti::Advantage::Services::NamesRoleService.new(
-    memberships_url: memberships_url,
-    access_token: access_token,
-    enforce_same_origin: true
-  )
-
-  begin
-    result = if page_url
-               nrps.memberships_from_url(page_url)
-             else
-               nrps.memberships(role: role, limit: limit, resource_link_id: resource_link_id)
-             end
-    delete_nrps_follow_up(cursor)
-  rescue Lti::Advantage::Error => e
-    halt 500, "Failed to fetch memberships: #{e.message}"
-  end
-
-  content_type :json
-  memberships_response_body(result).to_json
-rescue ArgumentError
-  halt 400, "limit must be an integer"
+  halt 410,
+       [
+         "This demo now fetches the first NRPS roster page during /lti/launch.",
+         "Launch the tool from Canvas to view the embedded roster."
+       ].join(" ")
 end
-# rubocop:enable Metrics/BlockLength
 
 __END__
 
@@ -246,5 +163,88 @@ __END__
     <% end %>
     <noscript><input type="submit" value="Click here to continue"></noscript>
   </form>
+</body>
+</html>
+
+@@launch_result
+<!DOCTYPE html>
+<html>
+<head>
+  <title>LTI Launch Demo</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      line-height: 1.5;
+      margin: 2rem;
+    }
+
+    table {
+      border-collapse: collapse;
+      margin-top: 1rem;
+      width: 100%;
+    }
+
+    th,
+    td {
+      border: 1px solid #d1d5db;
+      padding: 0.5rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    code {
+      background: #f3f4f6;
+      border-radius: 0.25rem;
+      padding: 0.1rem 0.3rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Launch successful</h1>
+  <p>Welcome, student! Your ID is: <strong><%= escape_html(launch.subject || "anonymous") %></strong>.</p>
+  <p>Deployment ID: <code><%= escape_html(launch.deployment_id) %></code></p>
+  <p>Roles: <%= summarized_roles(launch.roles) %></p>
+
+  <% if memberships_result %>
+    <h2>NRPS roster</h2>
+    <p>Context: <strong><%= escape_html(memberships_result.context&.fetch("title", nil) || "n/a") %></strong></p>
+
+    <% if memberships_result.members.empty? %>
+      <p>No members were returned for this launch.</p>
+    <% else %>
+      <table>
+        <thead>
+          <tr>
+            <th>User ID</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Roles</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% memberships_result.members.each do |member| %>
+            <tr>
+              <td><%= escape_html(member.user_id) %></td>
+              <td><%= escape_html(member.name || "(hidden)") %></td>
+              <td><%= escape_html(member.email || "(hidden)") %></td>
+              <td><%= summarized_roles(member.roles) %></td>
+              <td><%= escape_html(member.status) %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    <% end %>
+
+    <% if memberships_result.next_page_url || memberships_result.differences_url %>
+      <p>This embedded demo renders only the first NRPS page during launch.</p>
+    <% end %>
+  <% elsif nrps_error %>
+    <h2>NRPS roster unavailable</h2>
+    <p>The launch advertised NRPS, but the demo could not fetch the roster.</p>
+    <p><code><%= escape_html(nrps_error) %></code></p>
+  <% else %>
+    <p>This launch did not include the NRPS claim.</p>
+  <% end %>
 </body>
 </html>

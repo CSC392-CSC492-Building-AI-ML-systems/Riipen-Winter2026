@@ -70,6 +70,14 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
     post "/lti/launch", { id_token: id_token, state: state }
   end
 
+  def memberships_body(memberships_url:, members:, context: { "id" => "ctx-1", "title" => "Roster Demo" })
+    {
+      "id" => memberships_url,
+      "context" => context,
+      "members" => members
+    }.to_json
+  end
+
   let(:valid_params) { TestFactories.create_lti_params }
 
   before do
@@ -83,6 +91,16 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
     expect(last_response.body).to include("form")
     expect(last_response.body).to include("state")
     expect(last_response.body).to include("nonce")
+  end
+
+  it "returns a single public JWK for Canvas manual configuration" do
+    get "/lti/jwk"
+
+    expect(last_response).to be_ok
+    body = JSON.parse(last_response.body)
+    expect(body.fetch("kty")).to eq("RSA")
+    expect(body.fetch("alg")).to eq("RS256")
+    expect(body.fetch("kid")).not_to be_empty
   end
 
   it "returns a 400 error for missing parameters" do
@@ -102,10 +120,6 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
 
   it "completes the NRPS happy path through launch, token, and memberships fetch" do
     memberships_url = "https://lms.example.com/sections/2923/memberships"
-    launch_with_optional_nrps(memberships_url: memberships_url)
-
-    expect(last_response).to be_ok
-    expect(last_response.body).to include("NRPS memberships are available")
 
     allow(Faraday).to receive(:post).and_return(
       double(
@@ -119,10 +133,9 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
       double(
         "memberships_resp",
         success?: true,
-        body: {
-          "id" => memberships_url,
-          "context" => { "id" => "ctx-1", "title" => "Roster Demo" },
-          "members" => [
+        body: memberships_body(
+          memberships_url: memberships_url,
+          members: [
             {
               "user_id" => "user-123",
               "name" => "Jane Doe",
@@ -131,7 +144,7 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
               "status" => "Active"
             }
           ]
-        }.to_json,
+        ),
         headers: {
           "link" => "",
           "content-type" => Lti::Advantage::Services::NamesRoleService::MEDIA_TYPE
@@ -139,73 +152,31 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
       )
     )
 
-    get "/nrps/members", { role: "Learner", limit: "10" }
+    launch_with_optional_nrps(memberships_url: memberships_url)
 
     expect(last_response).to be_ok
-    body = JSON.parse(last_response.body)
-    expect(body.fetch("context").fetch("title")).to eq("Roster Demo")
-    expect(body.fetch("members").length).to eq(1)
-    expect(body.fetch("members").first.fetch("user_id")).to eq("user-123")
-    expect(body.fetch("members").first.fetch("roles")).to include(
-      "http://purl.imsglobal.org/vocab/lis/v2/membership#Learner"
-    )
-    expect(body.fetch("next_page_path")).to be_nil
-    expect(body.fetch("differences_path")).to be_nil
+    expect(last_response.body).to include("Launch successful")
+    expect(last_response.body).to include("NRPS roster")
+    expect(last_response.body).to include("Roster Demo")
+    expect(last_response.body).to include("Jane Doe")
+    expect(last_response.body).to include("jane@example.edu")
+    expect(last_response.body).to include("Learner")
   end
 
-  it "requires a completed launch before fetching memberships" do
-    get "/nrps/members"
-
-    expect(last_response.status).to eq(400)
-    expect(last_response.body).to include("Complete an LTI launch first")
-  end
-
-  it "returns 400 when limit is not an integer" do
-    launch_with_optional_nrps(memberships_url: "https://lms.example.com/sections/2923/memberships")
-
-    get "/nrps/members", { limit: "abc" }
-
-    expect(last_response.status).to eq(400)
-    expect(last_response.body).to include("limit must be an integer")
-  end
-
-  it "rejects raw page_url follow-up requests from the browser" do
-    launch_with_optional_nrps(memberships_url: "https://lms.example.com/sections/2923/memberships")
-
-    expect(Faraday).not_to receive(:post)
-    expect(Faraday).not_to receive(:get)
-
-    get "/nrps/members", { page_url: "https://attacker.example/steal-token" }
-
-    expect(last_response.status).to eq(400)
-    expect(last_response.body).to include("page_url cannot be supplied directly")
-  end
-
-  it "rejects invalid follow-up cursors before requesting a token" do
-    launch_with_optional_nrps(memberships_url: "https://lms.example.com/sections/2923/memberships")
-
-    expect(Faraday).not_to receive(:post)
-    expect(Faraday).not_to receive(:get)
-
-    get "/nrps/members", { cursor: "invalid-cursor" }
-
-    expect(last_response.status).to eq(400)
-    expect(last_response.body).to include("Invalid or expired NRPS cursor")
-  end
-
-  it "returns 500 when access token exchange fails" do
-    launch_with_optional_nrps(memberships_url: "https://lms.example.com/sections/2923/memberships")
-
+  it "renders an NRPS error when access token exchange fails" do
     allow(Faraday).to receive(:post).and_return(double("token_resp", status: 401, body: "Unauthorized"))
 
-    get "/nrps/members"
+    expect(Faraday).not_to receive(:get)
 
-    expect(last_response.status).to eq(500)
-    expect(last_response.body).to include("Failed to obtain access token")
+    launch_with_optional_nrps(memberships_url: "https://lms.example.com/sections/2923/memberships")
+
+    expect(last_response).to be_ok
+    expect(last_response.body).to include("NRPS roster unavailable")
+    expect(last_response.body).to include("Token request failed")
   end
 
-  it "returns 500 when memberships fetch fails" do
-    launch_with_optional_nrps(memberships_url: "https://lms.example.com/sections/2923/memberships")
+  it "renders an NRPS error when memberships fetch fails" do
+    memberships_url = "https://lms.example.com/sections/2923/memberships"
 
     allow(Faraday).to receive(:post).and_return(
       double(
@@ -216,17 +187,16 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
     )
     allow(Faraday).to receive(:get).and_return(double("memberships_resp", success?: false, status: 500, body: "boom"))
 
-    get "/nrps/members"
+    launch_with_optional_nrps(memberships_url: memberships_url)
 
-    expect(last_response.status).to eq(500)
-    expect(last_response.body).to include("Failed to fetch memberships")
+    expect(last_response).to be_ok
+    expect(last_response.body).to include("NRPS roster unavailable")
+    expect(last_response.body).to include("NRPS request failed")
   end
 
-  it "proxies next page URLs back through the tool route" do
+  it "notes when more NRPS pages are available" do
     memberships_url = "https://lms.example.com/sections/2923/memberships"
     next_page_url = "#{memberships_url}?page=2"
-
-    launch_with_optional_nrps(memberships_url: memberships_url)
 
     allow(Faraday).to receive(:post).and_return(
       double(
@@ -240,11 +210,10 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
         double(
           "page_1",
           success?: true,
-          body: {
-            "id" => memberships_url,
-            "context" => { "id" => "ctx-1", "title" => "Roster Demo" },
-            "members" => [{ "user_id" => "user-123", "roles" => ["Learner"], "status" => "Active" }]
-          }.to_json,
+          body: memberships_body(
+            memberships_url: memberships_url,
+            members: [{ "user_id" => "user-123", "roles" => ["Learner"], "status" => "Active" }]
+          ),
           headers: {
             "link" => "<#{next_page_url}>; rel=\"next\"",
             "content-type" => Lti::Advantage::Services::NamesRoleService::MEDIA_TYPE
@@ -267,66 +236,16 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
       end
     end
 
-    get "/nrps/members"
+    launch_with_optional_nrps(memberships_url: memberships_url)
 
     expect(last_response).to be_ok
-    page_one = JSON.parse(last_response.body)
-    expect(page_one.fetch("next_page_url")).to eq(next_page_url)
-    expect(page_one.fetch("next_page_path")).to include("cursor=")
-    expect(page_one.fetch("next_page_path")).not_to include("page_url=")
-
-    get page_one.fetch("next_page_path")
-
-    expect(last_response).to be_ok
-    page_two = JSON.parse(last_response.body)
-    expect(page_two.fetch("members").first.fetch("user_id")).to eq("user-456")
-
-    get page_one.fetch("next_page_path")
-
-    expect(last_response.status).to eq(400)
-    expect(last_response.body).to include("Invalid or expired NRPS cursor")
+    expect(last_response.body).to include("renders only the first NRPS page during launch")
   end
 
-  it "clears stored follow-up cursors when a new launch succeeds" do
-    memberships_url = "https://lms.example.com/sections/2923/memberships"
-    next_page_url = "#{memberships_url}?page=2"
-
-    launch_with_optional_nrps(memberships_url: memberships_url)
-
-    allow(Faraday).to receive(:post).and_return(
-      double(
-        "token_resp",
-        status: 200,
-        body: { "access_token" => "roster-token", "token_type" => "Bearer" }.to_json
-      )
-    )
-    allow(Faraday).to receive(:get).and_return(
-      double(
-        "page_1",
-        success?: true,
-        body: {
-          "id" => memberships_url,
-          "context" => { "id" => "ctx-1", "title" => "Roster Demo" },
-          "members" => [{ "user_id" => "user-123", "roles" => ["Learner"], "status" => "Active" }]
-        }.to_json,
-        headers: {
-          "link" => "<#{next_page_url}>; rel=\"next\"",
-          "content-type" => Lti::Advantage::Services::NamesRoleService::MEDIA_TYPE
-        }
-      )
-    )
-
+  it "returns guidance for the legacy memberships endpoint" do
     get "/nrps/members"
-    stale_path = JSON.parse(last_response.body).fetch("next_page_path")
 
-    launch_with_optional_nrps(memberships_url: memberships_url)
-
-    expect(Faraday).not_to receive(:post)
-    expect(Faraday).not_to receive(:get)
-
-    get stale_path
-
-    expect(last_response.status).to eq(400)
-    expect(last_response.body).to include("Invalid or expired NRPS cursor")
+    expect(last_response.status).to eq(410)
+    expect(last_response.body).to include("fetches the first NRPS roster page during /lti/launch")
   end
 end

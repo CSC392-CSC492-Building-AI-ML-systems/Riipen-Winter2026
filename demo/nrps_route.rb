@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
 # ─────────────────────────────────────────────────────────────────────────────
-# NRPS Demo Route — add this block to demo/app.rb
+# Legacy NRPS Demo Route — the current demo app renders the first roster page
+# during /lti/launch so embedded Canvas launches do not depend on browser
+# session cookies. Keep this file only as a reference for a separate follow-up
+# route implementation.
 #
 # Pre-requisites already in app.rb:
 #   LTI_REGISTRATION, TOOL_KEY_PAIR
