@@ -62,11 +62,15 @@ module Lti
         #   and differences URLs whose origin differs from the original
         #   +memberships_url+; defaults to +true+ so bearer tokens are not sent
         #   to a different origin unless explicitly opted in
-        def initialize(memberships_url:, access_token:, enforce_same_origin: true)
+        # @param allowed_origins [Array<String>, String, nil] additional absolute
+        #   HTTP(S) origins or URLs allowed for follow-up page/differences links
+        #   while same-origin enforcement remains enabled
+        def initialize(memberships_url:, access_token:, enforce_same_origin: true, allowed_origins: nil)
           @memberships_url = normalize_memberships_url(memberships_url)
           @memberships_origin = request_origin(@memberships_url)
           @access_token = assert_presence("access_token", access_token)
-          @enforce_same_origin = !!enforce_same_origin
+          @enforce_same_origin = enforce_same_origin
+          @allowed_origins = normalize_allowed_origins(allowed_origins)
         end
 
         # Fetches memberships from the service.
@@ -202,11 +206,23 @@ module Lti
 
         def normalize_request_url(url)
           normalized_url = normalize_http_url(url, field_name: "request URL", base_url: @memberships_url)
-          if @enforce_same_origin && request_origin(normalized_url) != @memberships_origin
+          request_url_origin = request_origin(normalized_url)
+          if @enforce_same_origin &&
+             request_url_origin != @memberships_origin &&
+             !@allowed_origins.include?(request_url_origin)
             raise Error, "Refusing to send NRPS token to a different origin"
           end
 
           normalized_url
+        end
+
+        def normalize_allowed_origins(origins)
+          Array(origins).each_with_object(Set.new) do |origin, normalized_origins|
+            normalized_url = normalize_http_url(origin, field_name: "allowed_origins entry")
+            normalized_origins << request_origin(normalized_url)
+          end
+        rescue Error => e
+          raise ConfigurationError, e.message
         end
 
         def normalize_http_url(url, field_name:, base_url: nil)
@@ -261,7 +277,7 @@ module Lti
 
         def parse_link_relations(header, base_url)
           parse_link_header(header).each_with_object({}) do |link, relations|
-            relation_types = link.fetch(:params).fetch("rel", "").split(/\s+/).reject(&:empty?)
+            relation_types = link.fetch(:params).fetch("rel", "").split(/\s+/).reject(&:empty?).map(&:downcase)
             next if relation_types.empty?
 
             resolved_url = normalize_request_url(

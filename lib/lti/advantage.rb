@@ -3,6 +3,7 @@
 require_relative "advantage/version"
 require_relative "advantage/errors"
 require_relative "advantage/claims"
+require_relative "advantage/link_header"
 require_relative "advantage/registration"
 require_relative "advantage/registration_store"
 require_relative "advantage/store/memory_store"

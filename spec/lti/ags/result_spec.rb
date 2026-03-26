@@ -14,10 +14,10 @@ RSpec.describe Lti::Advantage::AGS::Result do
       end.to raise_error(Lti::Advantage::ValidationError, /id is required/)
     end
 
-    it "raises ArgumentError when payload is not a hash" do
+    it "raises ValidationError when payload is not a hash" do
       expect do
         described_class.from_json(["not-a-hash"])
-      end.to raise_error(ArgumentError, /must be built from a Hash/)
+      end.to raise_error(Lti::Advantage::ValidationError, /result must be an object/)
     end
 
     it "requires scoreOf to be present" do

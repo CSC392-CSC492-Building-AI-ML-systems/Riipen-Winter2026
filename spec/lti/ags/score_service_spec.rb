@@ -102,6 +102,47 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
     )
   end
 
+  it "accepts serialized score hashes emitted by Score#to_h" do
+    score_payload = Lti::Advantage::AGS::Score.new(
+      user_id: "user-123",
+      timestamp: "2026-03-11T20:10:06.123Z",
+      activity_progress: "Completed",
+      grading_progress: "FullyGraded",
+      score_given: 9,
+      score_maximum: 10,
+      submission: {
+        started_at: "2026-03-11T20:00:00.123Z",
+        submitted_at: "2026-03-11T20:10:06.123Z"
+      }
+    ).to_h
+
+    score_service.publish(score: score_payload)
+
+    score_request = requests.last
+    expect(JSON.parse(score_request[:body])).to include(
+      "userId" => "user-123",
+      "scoreMaximum" => 10,
+      "submission" => {
+        "startedAt" => "2026-03-11T20:00:00.123Z",
+        "submittedAt" => "2026-03-11T20:10:06.123Z"
+      }
+    )
+  end
+
+  it "raises ValidationError when submission is not an object" do
+    expect do
+      score_service.publish(
+        score: {
+          user_id: "user-123",
+          timestamp: "2026-03-11T20:10:06.123Z",
+          activity_progress: "Completed",
+          grading_progress: "FullyGraded",
+          submission: "bad"
+        }
+      )
+    end.to raise_error(Lti::Advantage::ValidationError, /submission must be an object/)
+  end
+
   it "uses registration token_audience in the access token assertion" do
     registration_with_audience = Lti::Advantage::Registration.new(
       issuer: "https://platform.example",

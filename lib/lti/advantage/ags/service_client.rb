@@ -3,6 +3,7 @@
 require "json"
 require "net/http"
 require "securerandom"
+require "set"
 require "time"
 require "uri"
 require "jwt"
@@ -17,13 +18,19 @@ module Lti
 
         attr_reader :launch, :registration, :endpoint
 
-        def initialize(launch:, key_pair:, clock: -> { Time.now }, http_request: nil)
+        def initialize(
+          launch:, key_pair:, clock: -> { Time.now }, http_request: nil,
+          enforce_same_origin: true, allowed_origins: nil
+        )
           @launch = launch
           @registration = launch.registration
           @endpoint = launch.ags_endpoint
           @key_pair = key_pair
           @clock = clock
           @http_request = http_request || method(:default_http_request)
+          @enforce_same_origin = enforce_same_origin
+          @allowed_origins = normalize_allowed_origins(allowed_origins)
+          @trusted_service_origins = discover_service_origins
           @token_cache = {}
           @published_scores = {}
         end
@@ -96,15 +103,27 @@ module Lti
         end
 
         def request(method:, url:, scopes:, headers: {}, body: nil)
+          token = access_token(scopes)
+          normalized_url = normalize_service_request_url(url)
+
           response = @http_request.call(
             method: method,
-            url: url,
-            headers: headers.merge("Authorization" => "Bearer #{access_token(scopes)}"),
+            url: normalized_url,
+            headers: headers.merge("Authorization" => "Bearer #{token}"),
             body: body
           )
 
           validate_service_response!(response)
           response
+        end
+
+        def follow_up_url(link_header:, relation:, request_url:)
+          resolved_url = LinkHeader.relation_url(link_header, relation, base_url: request_url)
+          return nil if resolved_url.nil?
+
+          normalize_service_request_url(resolved_url, field_name: "AGS Link header URL")
+        rescue ArgumentError, URI::InvalidURIError => e
+          raise ServiceError, "Malformed AGS Link header: #{e.message}"
         end
 
         def access_token(scopes)
@@ -242,6 +261,68 @@ module Lti
                         end
 
           raise error_class, "AGS service request failed with HTTP #{code}: #{response.body}"
+        end
+
+        def normalize_service_request_url(url, field_name: "AGS request URL")
+          string_value = url.to_s.strip
+          raise ServiceError, "#{field_name} cannot be blank" if string_value.empty?
+
+          uri = URI.parse(string_value)
+          raise ServiceError, "#{field_name} must be an absolute HTTP(S) URL" unless absolute_http_uri?(uri)
+
+          normalized_url = uri.to_s
+          origin = request_origin(normalized_url)
+          return normalized_url unless @enforce_same_origin
+          return normalized_url if trusted_service_origin?(origin)
+          return normalized_url if @allowed_origins.include?(origin)
+
+          raise ServiceError, "Refusing to send AGS token to a different origin"
+        rescue URI::InvalidURIError => e
+          raise ServiceError, "Invalid #{field_name}: #{e.message}"
+        end
+
+        def normalize_allowed_origins(origins)
+          Array(origins).each_with_object(Set.new) do |origin, normalized_origins|
+            normalized_url = normalize_origin_source(origin, field_name: "allowed_origins entry")
+            normalized_origins << request_origin(normalized_url)
+          end
+        rescue ServiceError => e
+          raise ConfigurationError, e.message
+        end
+
+        def discover_service_origins
+          Set.new.tap do |origins|
+            [endpoint&.lineitems_url, endpoint&.lineitem_url].compact.each do |url|
+              origins << request_origin(normalize_origin_source(url, field_name: "AGS endpoint URL"))
+            end
+          end
+        rescue ServiceError
+          Set.new
+        end
+
+        def normalize_origin_source(url, field_name:)
+          string_value = url.to_s.strip
+          raise ServiceError, "#{field_name} cannot be blank" if string_value.empty?
+
+          uri = URI.parse(string_value)
+          raise ServiceError, "#{field_name} must be an absolute HTTP(S) URL" unless absolute_http_uri?(uri)
+
+          uri.to_s
+        rescue URI::InvalidURIError => e
+          raise ServiceError, "Invalid #{field_name}: #{e.message}"
+        end
+
+        def trusted_service_origin?(origin)
+          @trusted_service_origins.include?(origin)
+        end
+
+        def absolute_http_uri?(uri)
+          uri.is_a?(URI::HTTP) && !uri.host.nil?
+        end
+
+        def request_origin(url)
+          uri = URI.parse(url)
+          "#{uri.scheme}://#{uri.host}:#{uri.port}"
         end
 
         def default_http_request(method:, url:, headers:, body: nil)

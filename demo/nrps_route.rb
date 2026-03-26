@@ -45,6 +45,7 @@ get "/nrps/members" do
     key_pair: TOOL_KEY_PAIR,
     client_id: LTI_REGISTRATION.client_id,
     token_endpoint: LTI_REGISTRATION.token_endpoint,
+    token_audience: LTI_REGISTRATION.token_audience,
     scope: Lti::Advantage::Services::NamesRoleService::SCOPE,
     deployment_id: session[:lti_deployment_id]
   )

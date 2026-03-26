@@ -31,6 +31,7 @@ helpers do
       key_pair: TOOL_KEY_PAIR,
       client_id: launch.registration.client_id,
       token_endpoint: launch.registration.token_endpoint,
+      token_audience: launch.registration.token_audience,
       scope: Lti::Advantage::Services::NamesRoleService::SCOPE,
       deployment_id: launch.deployment_id
     )
@@ -52,6 +53,7 @@ LMS_ISSUER      = ENV["LMS_ISSUER"]      || "http://127.0.0.1:3000"
 LMS_AUTH_URL    = ENV["LMS_AUTH_URL"]    || "#{LMS_BROWSER_URL}/api/lti/authorize_redirect"
 LMS_JWKS_URL    = ENV["LMS_JWKS_URL"]    || "#{LMS_ISSUER}/api/lti/security/jwks"
 LMS_TOKEN_ENDPOINT = ENV["LMS_TOKEN_ENDPOINT"] || "#{LMS_BROWSER_URL}/login/oauth2/token"
+LMS_TOKEN_AUDIENCE = ENV["LMS_TOKEN_AUDIENCE"]
 DEPLOYMENT_ID   = ENV["LTI_DEPLOYMENT_ID"] || "test-deployment-123"
 TOOL_KEY_KID    = ENV["TOOL_KEY_KID"] || "demo-tool-key"
 TOOL_LAUNCH_URL = "http://#{TOOL_HOST}/lti/launch".freeze
@@ -79,6 +81,7 @@ LTI_REGISTRATION = Lti::Advantage::Registration.new(
   authorization_endpoint: LMS_AUTH_URL,
   jwks_url: LMS_JWKS_URL,
   token_endpoint: LMS_TOKEN_ENDPOINT,
+  token_audience: LMS_TOKEN_AUDIENCE,
   deployment_ids: [DEPLOYMENT_ID]
 )
 LTI_CLIENT = Lti::Advantage::Client.new(registrations: [LTI_REGISTRATION])

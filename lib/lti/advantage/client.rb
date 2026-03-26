@@ -106,12 +106,17 @@ module Lti
         @launch_validator.validate!(id_token: id_token, state: state)
       end
 
-      def ags_service_client(launch:, key_pair:, clock: -> { Time.now }, http_request: nil)
+      def ags_service_client(
+        launch:, key_pair:, clock: -> { Time.now }, http_request: nil,
+        enforce_same_origin: true, allowed_origins: nil
+      )
         AGS::ServiceClient.new(
           launch: launch,
           key_pair: key_pair,
           clock: clock,
-          http_request: http_request
+          http_request: http_request,
+          enforce_same_origin: enforce_same_origin,
+          allowed_origins: allowed_origins
         )
       end
     end

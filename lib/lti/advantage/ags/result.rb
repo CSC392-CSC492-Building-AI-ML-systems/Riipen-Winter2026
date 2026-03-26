@@ -25,7 +25,7 @@ module Lti
         end
 
         def self.from_json(hash)
-          raise ArgumentError, "Result must be built from a Hash, got #{hash.class}" unless hash.is_a?(Hash)
+          raise ValidationError, "result must be an object" unless hash.is_a?(Hash)
 
           h = hash.transform_keys(&:to_s)
           raise ValidationError, "id is required" if h["id"].nil? || h["id"].to_s.strip.empty? || !h["id"].is_a?(String)

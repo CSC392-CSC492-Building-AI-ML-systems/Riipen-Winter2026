@@ -22,7 +22,7 @@ module Lti
         end
 
         def available?
-          !lineitems_url.nil? || !lineitem_url.nil? || !scopes.empty?
+          !scopes.empty? && (!lineitems_url.nil? || !lineitem_url.nil?)
         end
 
         def supports_scope?(scope)

@@ -239,13 +239,35 @@ module Lti
         raise ValidationError, "AGS endpoint claim must be an object" unless claim.is_a?(Hash)
 
         validate_required_http_url!(claim["lineitems"], "AGS lineitems") if claim.key?("lineitems")
-        validate_required_http_url!(claim["lineitem"], "AGS lineitem") if claim.key?("lineitem")
-        validate_string_array!(claim["scope"], "AGS scope") if claim.key?("scope")
+        validate_optional_http_url!(claim["lineitem"], "AGS lineitem") if claim.key?("lineitem")
+        raise ValidationError, "AGS scope must be present" unless claim.key?("scope")
+
+        validate_string_array!(claim["scope"], "AGS scope")
+        raise ValidationError, "AGS scope must include at least one value" if claim["scope"].empty?
+
+        has_lineitems = claim.key?("lineitems") && !claim["lineitems"].to_s.strip.empty?
+        has_lineitem = claim.key?("lineitem") && !claim["lineitem"].to_s.strip.empty?
+        return if has_lineitems || has_lineitem
+
+        raise ValidationError, "AGS endpoint claim must include lineitems or lineitem"
       end
 
       def validate_required_http_url!(value, field_name)
         string_value = value.to_s.strip
         raise ValidationError, "#{field_name} must be a non-empty string" if string_value.empty?
+
+        validate_http_url!(string_value, field_name)
+      end
+
+      def validate_optional_http_url!(value, field_name)
+        string_value = value.to_s.strip
+        return if string_value.empty?
+
+        validate_http_url!(string_value, field_name)
+      end
+
+      def validate_http_url!(value, field_name)
+        string_value = value.to_s.strip
 
         uri = URI.parse(string_value)
         return if uri.is_a?(URI::HTTP) && !uri.host.nil?

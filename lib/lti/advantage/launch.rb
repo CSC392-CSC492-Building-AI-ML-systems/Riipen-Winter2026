@@ -70,6 +70,11 @@ module Lti
         AGS::Endpoint.new(claim)
       end
 
+      def ags_available?
+        endpoint = ags_endpoint
+        !endpoint.nil? && endpoint.available?
+      end
+
       # Convenience accessor for any arbitrary claim URI or key.
       def [](claim)
         payload[claim]

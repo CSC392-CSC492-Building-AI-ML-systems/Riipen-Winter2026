@@ -37,6 +37,38 @@ RSpec.describe Lti::Advantage::AGS::Score do
     expect(score.to_h).not_to have_key("scoreMaximum")
   end
 
+  it "accepts timestamps with +00 offsets" do
+    score = described_class.new(
+      user_id: "user-123",
+      timestamp: "2026-03-11T20:10:06.123+00",
+      activity_progress: "Completed",
+      grading_progress: "FullyGraded",
+      submission: {
+        startedAt: "2026-03-11T20:00:00.123+00",
+        submittedAt: "2026-03-11T20:10:06.123+00"
+      }
+    )
+
+    expect(score.to_h).to include(
+      "timestamp" => "2026-03-11T20:10:06.123+00",
+      "submission" => {
+        "startedAt" => "2026-03-11T20:00:00.123+00",
+        "submittedAt" => "2026-03-11T20:10:06.123+00"
+      }
+    )
+  end
+
+  it "rejects timestamps with non-RFC3339 compact offsets" do
+    score = described_class.new(
+      user_id: "user-123",
+      timestamp: "2026-03-11T20:10:06.123+0000",
+      activity_progress: "Completed",
+      grading_progress: "FullyGraded"
+    )
+
+    expect { score.to_h }.to raise_error(Lti::Advantage::ValidationError, /ISO8601 timestamp/)
+  end
+
   it "requires scoreMaximum when scoreGiven is present" do
     score = described_class.new(
       user_id: "user-123",

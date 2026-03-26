@@ -209,4 +209,39 @@ RSpec.describe Lti::Advantage::Launch do
       expect(launch.ags_endpoint).to be_nil
     end
   end
+
+  describe "#ags_available?" do
+    it "returns true when the launch advertises AGS scopes and at least one endpoint" do
+      launch = described_class.new(payload: payload_with_ags, header: {}, registration: registration)
+
+      expect(launch.ags_available?).to be true
+    end
+
+    it "returns false when the AGS claim is missing scopes" do
+      launch = described_class.new(
+        payload: payload_with_ags.merge(
+          Lti::Advantage::Claims::AGS_ENDPOINT => ags_claim_data.reject { |key, _| key == "scope" }
+        ),
+        header: {},
+        registration: registration
+      )
+
+      expect(launch.ags_available?).to be false
+    end
+
+    it "returns false when the AGS claim has scopes but no usable endpoint URLs" do
+      launch = described_class.new(
+        payload: payload_with_ags.merge(
+          Lti::Advantage::Claims::AGS_ENDPOINT => {
+            "lineitem" => "   ",
+            "scope" => [Lti::Advantage::AGS::Endpoint::SCORE_SCOPE]
+          }
+        ),
+        header: {},
+        registration: registration
+      )
+
+      expect(launch.ags_available?).to be false
+    end
+  end
 end

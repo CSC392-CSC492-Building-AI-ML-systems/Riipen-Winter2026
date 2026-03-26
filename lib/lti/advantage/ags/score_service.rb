@@ -11,7 +11,7 @@ module Lti
         end
 
         def publish(score:, line_item_url: nil)
-          score_record = score.is_a?(Score) ? score : Score.new(**score)
+          score_record = score.is_a?(Score) ? score : Score.from_h(score)
           score_record.validate!
           score_url = @service_client.endpoint.score_url(line_item_url: line_item_url)
 

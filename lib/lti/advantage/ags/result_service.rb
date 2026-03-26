@@ -44,7 +44,7 @@ module Lti
           data = response[:data]
           raise ServiceError, "Result service response must be a JSON array" unless data.is_a?(Array)
 
-          results = data.map { |item| Result.from_json(item) }
+          results = parse_results(data)
           results.each do |result|
             validate_score_of!(result: result, expected_url: expected_line_item_url)
           end
@@ -53,7 +53,7 @@ module Lti
             raise ServiceError, "Result service returned more than one result for user_id filter"
           end
 
-          next_url = parse_next_url(response[:link_header])
+          next_url = parse_next_url(response[:link_header], base_url: url)
 
           { results: results, next_url: next_url }
         end
@@ -80,6 +80,10 @@ module Lti
             )
 
             all_pages.concat(page[:results])
+            if user_id && all_pages.length > 1
+              raise ServiceError, "Result service returned more than one result for user_id filter"
+            end
+
             page_url = page[:next_url]
             break if page_url.nil?
           end
@@ -88,16 +92,8 @@ module Lti
 
         private
 
-        def parse_next_url(link_header)
-          return nil if link_header.nil? || link_header.to_s.strip.empty?
-
-          link_header.to_s.split(",").each do |part|
-            url = part.match(/<([^>]+)>/)
-            rel = part.match(/rel\s*=\s*["']?next["']?/i)
-            return url[1].strip if url && rel
-          end
-
-          nil
+        def parse_next_url(link_header, base_url:)
+          @service_client.follow_up_url(link_header: link_header, relation: "next", request_url: base_url)
         end
 
         def validate_media_type!(content_type)
@@ -114,11 +110,21 @@ module Lti
         def build_results_url(base:, user_id:, limit:)
           uri = URI.parse(base)
 
-          params = URI.decode_www_form(uri.query || "").to_h
-          params["user_id"] = user_id if user_id
-          params["limit"] = limit.to_s if limit
-          uri.query = URI.encode_www_form(params) unless params.empty?
+          params = URI.decode_www_form(uri.query || "")
+          params.reject! { |key, _value| key == "user_id" } if user_id
+          params.reject! { |key, _value| key == "limit" } if limit
+          params << ["user_id", user_id] if user_id
+          params << ["limit", limit.to_s] if limit
+          uri.query = params.empty? ? nil : URI.encode_www_form(params)
           uri.to_s
+        end
+
+        def parse_results(data)
+          data.each_with_index.map do |item, index|
+            Result.from_json(item)
+          rescue ValidationError => e
+            raise ServiceError, "Result service response contains an invalid result at index #{index}: #{e.message}"
+          end
         end
 
         def normalize_url(url:)

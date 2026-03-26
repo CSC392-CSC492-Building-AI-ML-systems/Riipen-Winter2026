@@ -4,6 +4,7 @@ require "spec_helper"
 require "json"
 require "jwt"
 require "openssl"
+require "uri"
 require_relative "../../demo/app" # Require the demo app for integration testing
 
 PLATFORM_PRIVATE_KEY = OpenSSL::PKey::RSA.generate(2048)
@@ -161,6 +162,67 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
     expect(last_response.body).to include("Jane Doe")
     expect(last_response.body).to include("jane@example.edu")
     expect(last_response.body).to include("Learner")
+  end
+
+  it "uses registration token_audience for the demo NRPS token exchange" do
+    registration_with_audience = Lti::Advantage::Registration.new(
+      issuer: LTI_REGISTRATION.issuer,
+      client_id: LTI_REGISTRATION.client_id,
+      authorization_endpoint: LTI_REGISTRATION.authorization_endpoint,
+      jwks_url: LTI_REGISTRATION.jwks_url,
+      token_endpoint: LTI_REGISTRATION.token_endpoint,
+      token_audience: "https://canvas.docker/login/oauth2/token-audience",
+      deployment_ids: LTI_REGISTRATION.deployment_ids,
+      algorithms: LTI_REGISTRATION.algorithms
+    )
+    stub_const("LTI_REGISTRATION", registration_with_audience)
+    stub_const("LTI_CLIENT", Lti::Advantage::Client.new(registrations: [registration_with_audience]))
+
+    memberships_url = "https://lms.example.com/sections/2923/memberships"
+
+    allow(Faraday).to receive(:post) do |url, &block|
+      expect(url).to eq(registration_with_audience.token_endpoint)
+
+      request = Struct.new(:headers, :body).new({}, nil)
+      block.call(request)
+
+      token_form = URI.decode_www_form(request.body).to_h
+      token_payload, = JWT.decode(token_form.fetch("client_assertion"), nil, false)
+      expect(token_payload["aud"]).to eq(registration_with_audience.token_audience)
+
+      double(
+        "token_resp",
+        status: 200,
+        body: { "access_token" => "roster-token", "token_type" => "Bearer" }.to_json
+      )
+    end
+
+    allow(Faraday).to receive(:get).and_return(
+      double(
+        "memberships_resp",
+        success?: true,
+        body: memberships_body(
+          memberships_url: memberships_url,
+          members: [
+            {
+              "user_id" => "user-123",
+              "name" => "Jane Doe",
+              "roles" => ["http://purl.imsglobal.org/vocab/lis/v2/membership#Learner"],
+              "status" => "Active"
+            }
+          ]
+        ),
+        headers: {
+          "link" => "",
+          "content-type" => Lti::Advantage::Services::NamesRoleService::MEDIA_TYPE
+        }
+      )
+    )
+
+    launch_with_optional_nrps(memberships_url: memberships_url)
+
+    expect(last_response).to be_ok
+    expect(last_response.body).to include("NRPS roster")
   end
 
   it "renders an NRPS error when access token exchange fails" do

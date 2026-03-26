@@ -23,6 +23,16 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
         described_class.new(memberships_url: "/memberships", access_token: access_token)
       end.to raise_error(Lti::Advantage::Error, /absolute HTTP\(S\) URL/)
     end
+
+    it "rejects invalid allowed_origins entries" do
+      expect do
+        described_class.new(
+          memberships_url: memberships_url,
+          access_token: access_token,
+          allowed_origins: ["not-a-url"]
+        )
+      end.to raise_error(Lti::Advantage::ConfigurationError, /allowed_origins entry/)
+    end
   end
 
   def build_membership_body(members: [], context: nil)
@@ -391,6 +401,23 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
       expect(result.next_page_url).to eq("#{memberships_url}?page=2")
     end
 
+    it "treats rel=NEXT case-insensitively" do
+      next_url = "#{memberships_url}?page=2"
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<#{next_url}>; rel=\"NEXT\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      result = subject.memberships
+      expect(result.next_page_url).to eq(next_url)
+    end
+
     it "rejects next links hosted on a different origin by default" do
       next_url = "https://cdn.lms.example.com/sections/2923/memberships?page=2"
       response_double = double(
@@ -426,6 +453,29 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
       allow(Faraday).to receive(:get).and_return(response_double)
 
       result = permissive_service.memberships
+
+      expect(result.next_page_url).to eq(next_url)
+    end
+
+    it "allows next links hosted on an allowlisted origin" do
+      next_url = "https://cdn.lms.example.com/sections/2923/memberships?page=2"
+      allowlisted_service = described_class.new(
+        memberships_url: memberships_url,
+        access_token: access_token,
+        allowed_origins: ["https://cdn.lms.example.com"]
+      )
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<#{next_url}>; rel=\"next\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      result = allowlisted_service.memberships
 
       expect(result.next_page_url).to eq(next_url)
     end
@@ -466,6 +516,46 @@ RSpec.describe Lti::Advantage::Services::NamesRoleService do
 
       result = permissive_service.memberships
 
+      expect(result.differences_url).to eq(diff_url)
+    end
+
+    it "allows differences links hosted on an allowlisted origin" do
+      diff_url = "https://cdn.lms.example.com/differences?since=1422554502"
+      allowlisted_service = described_class.new(
+        memberships_url: memberships_url,
+        access_token: access_token,
+        allowed_origins: ["https://cdn.lms.example.com"]
+      )
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<#{diff_url}>; rel=\"differences\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      result = allowlisted_service.memberships
+
+      expect(result.differences_url).to eq(diff_url)
+    end
+
+    it "treats rel=Differences case-insensitively" do
+      diff_url = "#{memberships_url}?since=1422554502"
+      response_double = double(
+        "resp",
+        success?: true,
+        body: build_membership_body.to_json,
+        headers: {
+          "link" => "<#{diff_url}>; rel=\"Differences\"",
+          "content-type" => described_class::MEDIA_TYPE
+        }
+      )
+      allow(Faraday).to receive(:get).and_return(response_double)
+
+      result = subject.memberships
       expect(result.differences_url).to eq(diff_url)
     end
 

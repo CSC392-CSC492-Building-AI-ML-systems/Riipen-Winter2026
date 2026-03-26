@@ -10,6 +10,8 @@ module Lti
       class LineItemService
         LINE_ITEM_CONTENT_TYPE = "application/vnd.ims.lis.v2.lineitem+json"
         LINE_ITEM_CONTAINER_CONTENT_TYPE = "application/vnd.ims.lis.v2.lineitemcontainer+json"
+        OPTIONAL_STRING_FIELDS = Set.new(%i[id label resource_id tag resource_link_id start_date_time
+                                            end_date_time]).freeze
 
         def initialize(service_client:)
           @service_client = service_client
@@ -48,7 +50,7 @@ module Lti
             headers: { "Accept" => LINE_ITEM_CONTAINER_CONTENT_TYPE }
           )
 
-          parse_line_item_page(response)
+          parse_line_item_page(response, request_url: request_url)
         end
 
         def list_all(resource_link_id: nil, resource_id: nil, tag: nil, limit: nil, url: nil)
@@ -105,32 +107,23 @@ module Lti
         end
 
         def update(line_item:, line_item_url: nil)
-          record = normalize_line_item(line_item)
+          changes = normalize_line_item_changes(line_item)
           url = @service_client.endpoint.line_item_url!(line_item_url: line_item_url, write: true)
           current = fetch(line_item_url: url)
 
-          if !current.resource_link_id.nil? &&
-             !record.resource_link_id.nil? &&
-             current.resource_link_id != record.resource_link_id
-            raise ValidationError, "resourceLinkId cannot be changed"
-          end
+          validate_update_changes!(current, changes)
 
-          if !current.id.nil? && !record.id.nil? && current.id != record.id
-            raise ValidationError, "line item id cannot be changed"
-          end
-
-          merged_payload = current.to_h.merge(record.to_h)
-          merged_payload["id"] = current.id unless current.id.nil?
-          merged_record = LineItem.from_h(merged_payload)
+          replacement_payload = current.to_h.merge(changes)
+          replacement_record = LineItem.from_h(replacement_payload)
           response = @service_client.put_json(
             url: url,
-            body: merged_record.to_h(include_id: false),
+            body: replacement_record.to_h(include_id: false),
             content_type: LINE_ITEM_CONTENT_TYPE,
             accept: LINE_ITEM_CONTENT_TYPE,
             scopes: [Endpoint::LINEITEM_SCOPE]
           )
 
-          parse_line_item(response, fallback: merged_record)
+          parse_line_item(response, fallback: replacement_record)
         end
 
         def delete(line_item_url: nil)
@@ -146,10 +139,59 @@ module Lti
 
         private
 
+        def normalize_line_item_changes(line_item)
+          return line_item.to_h if line_item.is_a?(LineItem)
+
+          hash = LineItem.stringify_keys(line_item)
+          field_changes = extract_line_item_field_changes(hash)
+          extension_changes = hash.reject { |key, _| LineItem::KNOWN_FIELDS.include?(key) }
+
+          field_changes.merge(extension_changes)
+        rescue TypeError
+          raise ValidationError, "line item must be an object"
+        end
+
         def normalize_line_item(line_item)
           return line_item if line_item.is_a?(LineItem)
 
-          LineItem.new(**line_item)
+          LineItem.from_h(line_item)
+        end
+
+        def extract_line_item_field_changes(hash)
+          LineItem::INPUT_KEYS.each_with_object({}) do |(field, aliases), changes|
+            next unless aliases.any? { |key| hash.key?(key) }
+
+            value = LineItem.fetch_value(hash, *aliases)
+            normalized_value = normalize_line_item_change(field, value)
+            next if field == :id && normalized_value.nil?
+
+            changes[LineItem::SERIALIZED_KEYS.fetch(field)] = normalized_value
+          end
+        end
+
+        def normalize_line_item_change(field, value)
+          return normalize_optional_string(value) if OPTIONAL_STRING_FIELDS.include?(field)
+
+          value
+        end
+
+        def normalize_optional_string(value)
+          return nil if value.nil?
+
+          stripped = value.to_s.strip
+          return nil if stripped.empty?
+
+          stripped
+        end
+
+        def validate_update_changes!(current, changes)
+          if changes.key?("resourceLinkId") && changes["resourceLinkId"] != current.resource_link_id
+            raise ValidationError, "resourceLinkId cannot be changed"
+          end
+
+          return unless changes.key?("id") && !current.id.nil? && changes["id"] != current.id
+
+          raise ValidationError, "line item id cannot be changed"
         end
 
         def parse_line_item(response, fallback: nil)
@@ -158,19 +200,29 @@ module Lti
 
           raise ServiceError, "AGS line item response must include a JSON object body" if body.empty?
 
-          LineItem.from_h(parse_json_object(body))
+          parse_service_line_item(parse_json_object(body))
         end
 
-        def parse_line_item_page(response)
+        def parse_line_item_page(response, request_url:)
           payload = JSON.parse(response.body)
           raise ServiceError, "AGS line item list response must be a JSON array" unless payload.is_a?(Array)
 
           {
-            line_items: payload.map { |item| LineItem.from_h(item) },
-            next_url: parse_next_url(read_link_header(response))
+            line_items: payload.each_with_index.map { |item, index| parse_service_line_item(item, index: index) },
+            next_url: parse_next_url(read_link_header(response), base_url: request_url)
           }
         rescue JSON::ParserError => e
           raise ServiceError, "AGS line item response is not valid JSON: #{e.message}"
+        end
+
+        def parse_service_line_item(payload, index: nil)
+          line_item = LineItem.from_h(payload)
+          line_item.validate!
+          line_item
+        rescue ValidationError => e
+          raise ServiceError, "AGS line item response is invalid: #{e.message}" if index.nil?
+
+          raise ServiceError, "AGS line item response contains an invalid item at index #{index}: #{e.message}"
         end
 
         def parse_json_object(body)
@@ -205,16 +257,8 @@ module Lti
           uri.to_s
         end
 
-        def parse_next_url(link_header)
-          return nil if link_header.nil? || link_header.to_s.strip.empty?
-
-          link_header.to_s.split(",").each do |part|
-            url = part.match(/<([^>]+)>/)
-            rel = part.match(/rel\s*=\s*["']?next["']?/i)
-            return url[1].strip if url && rel
-          end
-
-          nil
+        def parse_next_url(link_header, base_url:)
+          @service_client.follow_up_url(link_header: link_header, relation: "next", request_url: base_url)
         end
 
         def read_link_header(response)

@@ -8,7 +8,18 @@ module Lti
       class Score
         ACTIVITY_PROGRESS_VALUES = %w[Initialized Started InProgress Submitted Completed].freeze
         GRADING_PROGRESS_VALUES = %w[NotReady Failed Pending PendingManual FullyGraded].freeze
-        TIMEZONE_TIMESTAMP_FORMAT = /\.\d+(?:Z|[+-]\d{2}:?\d{2})\z/
+        TIMEZONE_TIMESTAMP_FORMAT = /\.\d+(?:Z|[+-]\d{2}(?::\d{2})?)\z/
+        INPUT_KEYS = {
+          user_id: %w[user_id userId],
+          timestamp: %w[timestamp],
+          activity_progress: %w[activity_progress activityProgress],
+          grading_progress: %w[grading_progress gradingProgress],
+          score_given: %w[score_given scoreGiven],
+          score_maximum: %w[score_maximum scoreMaximum],
+          comment: %w[comment],
+          scoring_user_id: %w[scoring_user_id scoringUserId],
+          submission: %w[submission]
+        }.freeze
 
         attr_reader :user_id, :timestamp, :activity_progress, :grading_progress,
                     :score_given, :score_maximum, :comment, :scoring_user_id, :submission
@@ -26,6 +37,36 @@ module Lti
           @comment = optional_string(comment)
           @scoring_user_id = optional_string(scoring_user_id)
           @submission = normalize_submission(submission)
+        end
+
+        def self.from_h(payload)
+          hash = stringify_keys(payload)
+
+          new(
+            user_id: fetch_value(hash, *INPUT_KEYS[:user_id]),
+            timestamp: fetch_value(hash, *INPUT_KEYS[:timestamp]),
+            activity_progress: fetch_value(hash, *INPUT_KEYS[:activity_progress]),
+            grading_progress: fetch_value(hash, *INPUT_KEYS[:grading_progress]),
+            score_given: fetch_value(hash, *INPUT_KEYS[:score_given]),
+            score_maximum: fetch_value(hash, *INPUT_KEYS[:score_maximum]),
+            comment: fetch_value(hash, *INPUT_KEYS[:comment]),
+            scoring_user_id: fetch_value(hash, *INPUT_KEYS[:scoring_user_id]),
+            submission: fetch_value(hash, *INPUT_KEYS[:submission])
+          )
+        rescue TypeError
+          raise ValidationError, "score must be an object"
+        end
+
+        def self.stringify_keys(hash)
+          Hash(hash).transform_keys(&:to_s)
+        end
+
+        def self.fetch_value(hash, *keys)
+          keys.each do |key|
+            return hash[key] if hash.key?(key)
+          end
+
+          nil
         end
 
         def to_h
@@ -118,11 +159,13 @@ module Lti
         def normalize_submission(submission_value)
           return nil if submission_value.nil?
 
-          hash = submission_value.transform_keys(&:to_s)
+          hash = self.class.stringify_keys(submission_value)
           {
-            "startedAt" => optional_string(hash["startedAt"]),
-            "submittedAt" => optional_string(hash["submittedAt"])
+            "startedAt" => optional_string(self.class.fetch_value(hash, "startedAt", "started_at")),
+            "submittedAt" => optional_string(self.class.fetch_value(hash, "submittedAt", "submitted_at"))
           }.compact
+        rescue TypeError
+          raise ValidationError, "submission must be an object"
         end
 
         def optional_string(value)

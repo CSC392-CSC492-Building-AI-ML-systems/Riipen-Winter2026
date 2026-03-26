@@ -132,6 +132,27 @@ RSpec.describe Lti::Advantage::AGS::LineItemService do
     expect(JSON.parse(request[:body])).not_to have_key("id")
   end
 
+  it "accepts serialized line item hashes for create" do
+    payload = Lti::Advantage::AGS::LineItem.new(
+      label: "Homework 1",
+      score_maximum: 100,
+      resource_id: "resource-123",
+      resource_link_id: "link-123",
+      start_date_time: "2026-03-11T20:10:06+00:00"
+    ).to_h(include_id: false)
+
+    item = line_item_service.create(line_item: payload)
+
+    expect(item.id).to eq("https://platform.example/line_items/42")
+    expect(JSON.parse(requests.last[:body])).to include(
+      "label" => "Homework 1",
+      "scoreMaximum" => 100,
+      "resourceId" => "resource-123",
+      "resourceLinkId" => "link-123",
+      "startDateTime" => "2026-03-11T20:10:06+00:00"
+    )
+  end
+
   it "fetches a line item from the member url" do
     item = line_item_service.fetch
 
@@ -147,6 +168,31 @@ RSpec.describe Lti::Advantage::AGS::LineItemService do
     expect(page[:next_url]).to eq("https://platform.example/contexts/1/line_items?page=2")
   end
 
+  it "raises ServiceError when a line item entry is not an object" do
+    invalid_item_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+
+      case [method, url]
+      when [:post, "https://platform.example/oauth2/token"]
+        response_class.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when [:get, "https://platform.example/contexts/1/line_items?resource_link_id=link-123&tag=homework&limit=1"]
+        response_class.new("200", "[\"not-an-object\"]")
+      else
+        response_class.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: invalid_item_http
+    )
+
+    expect do
+      described_class.new(service_client: client).list(resource_link_id: "link-123", tag: "homework", limit: 1)
+    end.to raise_error(Lti::Advantage::ServiceError, /invalid item at index 0/i)
+  end
+
   it "follows Link rel=next when collecting all line items" do
     items = line_item_service.list_all(resource_link_id: "link-123", tag: "homework", limit: 1)
 
@@ -158,31 +204,167 @@ RSpec.describe Lti::Advantage::AGS::LineItemService do
     )
   end
 
-  it "updates a line item with full replacement semantics" do
+  it "resolves relative next links against the collection request URL" do
+    relative_link_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+
+      case [method, url]
+      when [:post, "https://platform.example/oauth2/token"]
+        response_class.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when [:get, "https://platform.example/contexts/1/line_items?resource_link_id=link-123&tag=homework&limit=1"]
+        response_class.new("200", "[#{line_item_body}]", %(<?page=2>; rel="next"))
+      when [:get, "https://platform.example/contexts/1/line_items?page=2"]
+        response_class.new("200", "[#{second_line_item_body}]")
+      else
+        response_class.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: relative_link_http
+    )
+
+    items = described_class.new(service_client: client).list_all(resource_link_id: "link-123", tag: "homework",
+                                                                 limit: 1)
+    expect(items.map(&:id)).to eq(
+      [
+        "https://platform.example/line_items/42",
+        "https://platform.example/line_items/43"
+      ]
+    )
+  end
+
+  it "rejects next links hosted on a different origin by default" do
+    cross_origin_link_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+
+      case [method, url]
+      when [:post, "https://platform.example/oauth2/token"]
+        response_class.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when [:get, "https://platform.example/contexts/1/line_items?resource_link_id=link-123&tag=homework&limit=1"]
+        response_class.new(
+          "200",
+          "[#{line_item_body}]",
+          %(<https://cdn.platform.example/contexts/1/line_items?page=2>; rel="next")
+        )
+      else
+        response_class.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: cross_origin_link_http
+    )
+
+    expect do
+      described_class.new(service_client: client).list_all(resource_link_id: "link-123", tag: "homework", limit: 1)
+    end.to raise_error(Lti::Advantage::ServiceError, /different origin/)
+  end
+
+  it "raises when the Link header is malformed" do
+    malformed_link_http = lambda do |method:, url:, headers:, body: nil|
+      requests << { method: method, url: url, headers: headers, body: body }
+
+      case [method, url]
+      when [:post, "https://platform.example/oauth2/token"]
+        response_class.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
+      when [:get, "https://platform.example/contexts/1/line_items?resource_link_id=link-123&tag=homework&limit=1"]
+        response_class.new(
+          "200",
+          "[#{line_item_body}]",
+          "<https://platform.example/contexts/1/line_items?page=2; rel=\"next\""
+        )
+      else
+        response_class.new("404", "not found")
+      end
+    end
+
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch,
+      key_pair: key_pair,
+      http_request: malformed_link_http
+    )
+
+    expect do
+      described_class.new(service_client: client).list_all(resource_link_id: "link-123", tag: "homework", limit: 1)
+    end.to raise_error(Lti::Advantage::ServiceError, /Malformed AGS Link header/)
+  end
+
+  it "merges the current line item state when updating partial attributes" do
     item = line_item_service.update(
       line_item: {
-        id: "https://platform.example/line_items/42",
-        label: "Homework 1 - Updated",
-        score_maximum: 125,
-        resource_link_id: "link-123"
+        label: "Homework 1 - Updated"
       }
     )
 
     expect(item.label).to eq("Homework 1 - Updated")
+    expect(item.score_maximum).to eq(100)
+    expect(item.resource_id).to eq("resource-123")
+    expect(item.tag).to eq("homework")
+    expect(item.start_date_time).to eq("2026-03-11T20:10:06Z")
+    expect(item.end_date_time).to eq("2026-03-12T20:10:06+00:00")
+    expect(item.grades_released).to be(true)
 
     request = requests.last
     expect(request[:method]).to eq(:put)
     expect(request[:url]).to eq("https://platform.example/line_items/42")
-    expect(JSON.parse(request[:body])).to include(
+    expect(JSON.parse(request[:body])).to eq(
+      "https://example.com/ext" => "value",
       "label" => "Homework 1 - Updated",
-      "scoreMaximum" => 125,
+      "scoreMaximum" => 100,
       "resourceId" => "resource-123",
       "tag" => "homework",
       "resourceLinkId" => "link-123",
       "startDateTime" => "2026-03-11T20:10:06Z",
       "endDateTime" => "2026-03-12T20:10:06+00:00",
-      "gradesReleased" => true,
-      "https://example.com/ext" => "value"
+      "gradesReleased" => true
+    )
+  end
+
+  it "allows explicitly clearing optional fields during update" do
+    item = line_item_service.update(
+      line_item: {
+        label: "Homework 1 - Updated",
+        tag: "   ",
+        start_date_time: nil,
+        grades_released: nil
+      }
+    )
+
+    expect(item.label).to eq("Homework 1 - Updated")
+    expect(item.tag).to be_nil
+    expect(item.start_date_time).to be_nil
+    expect(item.grades_released).to be_nil
+    expect(item.resource_id).to eq("resource-123")
+    expect(item.end_date_time).to eq("2026-03-12T20:10:06+00:00")
+
+    expect(JSON.parse(requests.last[:body])).to eq(
+      "https://example.com/ext" => "value",
+      "label" => "Homework 1 - Updated",
+      "scoreMaximum" => 100,
+      "resourceId" => "resource-123",
+      "resourceLinkId" => "link-123",
+      "endDateTime" => "2026-03-12T20:10:06+00:00"
+    )
+  end
+
+  it "accepts serialized line item hashes for update" do
+    serialized = line_item_service.fetch.to_h.merge(
+      "label" => "Homework 1 - Wire Update",
+      "startDateTime" => "2026-03-11T20:10:06+00:00"
+    )
+
+    item = line_item_service.update(line_item: serialized)
+
+    expect(item.label).to eq("Homework 1 - Wire Update")
+    expect(item.start_date_time).to eq("2026-03-11T20:10:06+00:00")
+    expect(JSON.parse(requests.last[:body])).to include(
+      "label" => "Homework 1 - Wire Update",
+      "startDateTime" => "2026-03-11T20:10:06+00:00"
     )
   end
 

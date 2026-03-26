@@ -8,17 +8,19 @@ module Lti
       class LineItem
         TIMEZONE_TIMESTAMP_FORMAT = /(?:Z|[+-]\d{2}:\d{2})\z/
 
-        KNOWN_FIELDS = {
-          "id" => :id,
-          "label" => :label,
-          "scoreMaximum" => :score_maximum,
-          "resourceId" => :resource_id,
-          "tag" => :tag,
-          "resourceLinkId" => :resource_link_id,
-          "startDateTime" => :start_date_time,
-          "endDateTime" => :end_date_time,
-          "gradesReleased" => :grades_released
+        INPUT_KEYS = {
+          id: %w[id],
+          label: %w[label],
+          score_maximum: %w[scoreMaximum score_maximum],
+          resource_id: %w[resourceId resource_id],
+          tag: %w[tag],
+          resource_link_id: %w[resourceLinkId resource_link_id],
+          start_date_time: %w[startDateTime start_date_time],
+          end_date_time: %w[endDateTime end_date_time],
+          grades_released: %w[gradesReleased grades_released]
         }.freeze
+        SERIALIZED_KEYS = INPUT_KEYS.transform_values(&:first).freeze
+        KNOWN_FIELDS = INPUT_KEYS.values.flatten.freeze
 
         attr_reader :id, :label, :score_maximum, :resource_id, :tag, :resource_link_id,
                     :start_date_time, :end_date_time, :grades_released, :extensions
@@ -26,21 +28,31 @@ module Lti
         def self.from_h(payload)
           hash = stringify_keys(payload)
           new(
-            id: hash["id"],
-            label: hash["label"],
-            score_maximum: hash["scoreMaximum"],
-            resource_id: hash["resourceId"],
-            tag: hash["tag"],
-            resource_link_id: hash["resourceLinkId"],
-            start_date_time: hash["startDateTime"],
-            end_date_time: hash["endDateTime"],
-            grades_released: hash["gradesReleased"],
-            extensions: hash.reject { |key, _| KNOWN_FIELDS.key?(key) }
+            id: fetch_value(hash, *INPUT_KEYS[:id]),
+            label: fetch_value(hash, *INPUT_KEYS[:label]),
+            score_maximum: fetch_value(hash, *INPUT_KEYS[:score_maximum]),
+            resource_id: fetch_value(hash, *INPUT_KEYS[:resource_id]),
+            tag: fetch_value(hash, *INPUT_KEYS[:tag]),
+            resource_link_id: fetch_value(hash, *INPUT_KEYS[:resource_link_id]),
+            start_date_time: fetch_value(hash, *INPUT_KEYS[:start_date_time]),
+            end_date_time: fetch_value(hash, *INPUT_KEYS[:end_date_time]),
+            grades_released: fetch_value(hash, *INPUT_KEYS[:grades_released]),
+            extensions: hash.reject { |key, _| KNOWN_FIELDS.include?(key) }
           )
+        rescue TypeError
+          raise ValidationError, "line item must be an object"
         end
 
         def self.stringify_keys(hash)
           Hash(hash).transform_keys(&:to_s)
+        end
+
+        def self.fetch_value(hash, *keys)
+          keys.each do |key|
+            return hash[key] if hash.key?(key)
+          end
+
+          nil
         end
 
         def initialize(

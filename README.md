@@ -119,12 +119,12 @@ end
 
 `launch.nrps_available?` only reflects what the launch advertises: it checks for a valid `context_memberships_url` plus at least one supported NRPS service version. It does not verify your `Registration` configuration, token issuance, granted scopes, or downstream HTTP success.
 
-`AccessToken` uses the platform token endpoint configured on the selected `Registration`, and `NamesRoleService#memberships` normalizes short role filters like `"Learner"` to their IMS membership role URIs while validating `limit` and `resource_link_id`. `NamesRoleService#memberships_from_url` rejects cross-origin follow-up URLs by default so LMS bearer tokens stay scoped to the original NRPS origin; pass `enforce_same_origin: false` only if your platform legitimately paginates across multiple origins.
+`AccessToken` uses the platform token endpoint configured on the selected `Registration`, and `NamesRoleService#memberships` normalizes short role filters like `"Learner"` to their IMS membership role URIs while validating `limit` and `resource_link_id`. `NamesRoleService#memberships_from_url` rejects cross-origin follow-up URLs by default so LMS bearer tokens stay scoped to the original NRPS origin; pass `enforce_same_origin: false` only if your platform legitimately paginates across multiple origins, or provide `allowed_origins:` to keep same-origin enforcement enabled while allowlisting known pagination hosts.
 
 ### 4) Access AGS services
 
 ```ruby
-return if launch.ags_endpoint.nil?
+return unless launch.ags_available?
 
 ags = client.ags_service_client(
   launch: launch,
@@ -149,11 +149,13 @@ line_items = ags.line_item_service.list_all(limit: 50)
 
 AGS launches may include both NRPS and AGS claims in the same `id_token`. `Client#validate_launch!` preserves both, so a single validated `Launch` can drive roster and grade workflows.
 
-`Client#ags_service_client` uses the `Registration` token settings, validates granted AGS scopes per request, caches access tokens by scope set, and tracks score timestamps per service client instance so duplicate or out-of-order publishes are rejected before they are sent.
+`launch.ags_available?` only reflects whether the launch advertises at least one usable AGS endpoint plus granted scopes. It does not verify token issuance, later line item discovery, or downstream HTTP success.
+
+`Client#ags_service_client` uses the `Registration` token settings, validates granted AGS scopes per request, caches access tokens by scope set, tracks score timestamps per service client instance so duplicate or out-of-order publishes are rejected before they are sent, and rejects cross-origin AGS follow-up URLs by default so platform bearer tokens stay scoped to launch-advertised AGS origins. Pass `enforce_same_origin: false` only if your LMS legitimately paginates across multiple origins, or provide `allowed_origins:` to allowlist known pagination hosts while keeping origin checks enabled.
 
 ## Demo app and tool JWKS
 
-The Sinatra demo in `demo/app.rb` uses the `Client` flow for login and launch validation, exchanges a JWT client assertion for an NRPS access token during launch, and renders the first NRPS roster page directly in the embedded launch response so the Canvas demo does not depend on browser session cookies. For local Canvas Docker setups, prefer a pasted `public_jwk` over an HTTP `public_jwk_url`; the demo exposes both `/lti/jwks` and a copy/paste-friendly `/lti/jwk` endpoint, and it persists a reusable dev private key under `tmp/demo-tool-private-key.pem` by default so the pasted JWK stays valid across restarts.
+The Sinatra demo in `demo/app.rb` uses the `Client` flow for login and launch validation, exchanges a JWT client assertion for an NRPS access token during launch, and renders the first NRPS roster page directly in the embedded launch response so the Canvas demo does not depend on browser session cookies. If your LMS expects a distinct JWT audience for token exchange, set `LMS_TOKEN_AUDIENCE` so the demo passes that override through the registration. For local Canvas Docker setups, prefer a pasted `public_jwk` over an HTTP `public_jwk_url`; the demo exposes both `/lti/jwks` and a copy/paste-friendly `/lti/jwk` endpoint, and it persists a reusable dev private key under `tmp/demo-tool-private-key.pem` by default so the pasted JWK stays valid across restarts.
 
 ## API Documentation (RDoc)
 

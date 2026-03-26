@@ -168,6 +168,63 @@ RSpec.describe "LTI launch validation" do
     end.to raise_error(Lti::Advantage::ValidationError, /AGS lineitem/)
   end
 
+  it "allows AGS endpoint claims with blank lineitem URLs when lineitems is present" do
+    payload = base_payload.merge(
+      Lti::Advantage::Claims::AGS_ENDPOINT => {
+        "lineitems" => ags_claim.fetch("lineitems"),
+        "lineitem" => "   ",
+        "scope" => [Lti::Advantage::AGS::Endpoint::SCORE_SCOPE]
+      }
+    )
+    blank_lineitem_token = JWT.encode(payload, private_key, "RS256", kid: "platform-kid")
+
+    launch = client.validate_launch!(id_token: blank_lineitem_token, state: "state-123")
+
+    expect(launch.ags_endpoint).not_to be_nil
+    expect(launch.ags_endpoint.lineitem_url).to be_nil
+  end
+
+  it "rejects AGS endpoint claims without scopes" do
+    payload = base_payload.merge(
+      Lti::Advantage::Claims::AGS_ENDPOINT => {
+        "lineitem" => ags_claim.fetch("lineitem")
+      }
+    )
+    malformed_ags_token = JWT.encode(payload, private_key, "RS256", kid: "platform-kid")
+
+    expect do
+      client.validate_launch!(id_token: malformed_ags_token, state: "state-123")
+    end.to raise_error(Lti::Advantage::ValidationError, /AGS scope must be present/)
+  end
+
+  it "rejects AGS endpoint claims with empty scopes" do
+    payload = base_payload.merge(
+      Lti::Advantage::Claims::AGS_ENDPOINT => {
+        "lineitem" => ags_claim.fetch("lineitem"),
+        "scope" => []
+      }
+    )
+    malformed_ags_token = JWT.encode(payload, private_key, "RS256", kid: "platform-kid")
+
+    expect do
+      client.validate_launch!(id_token: malformed_ags_token, state: "state-123")
+    end.to raise_error(Lti::Advantage::ValidationError, /AGS scope must include at least one value/)
+  end
+
+  it "rejects AGS endpoint claims without any usable endpoints" do
+    payload = base_payload.merge(
+      Lti::Advantage::Claims::AGS_ENDPOINT => {
+        "lineitem" => "   ",
+        "scope" => [Lti::Advantage::AGS::Endpoint::SCORE_SCOPE]
+      }
+    )
+    malformed_ags_token = JWT.encode(payload, private_key, "RS256", kid: "platform-kid")
+
+    expect do
+      client.validate_launch!(id_token: malformed_ags_token, state: "state-123")
+    end.to raise_error(Lti::Advantage::ValidationError, /must include lineitems or lineitem/)
+  end
+
   it "rejects AGS endpoint claims with non-array scopes" do
     payload = base_payload.merge(
       Lti::Advantage::Claims::AGS_ENDPOINT => {
