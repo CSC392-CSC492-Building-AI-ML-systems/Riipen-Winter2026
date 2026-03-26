@@ -30,6 +30,9 @@ module Lti
 
       # URI for custom parameter map claim.
       CUSTOM = "https://purl.imsglobal.org/spec/lti/claim/custom"
+
+      # URI for the Assignment and Grade Services endpoint claim.
+      AGS_ENDPOINT = "https://purl.imsglobal.org/spec/lti-ags/claim/endpoint"
     end
   end
 end

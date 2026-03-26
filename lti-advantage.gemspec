@@ -5,8 +5,8 @@ require_relative "lib/lti/advantage/version"
 Gem::Specification.new do |spec|
   spec.name = "lti-advantage"
   spec.version = Lti::Advantage::VERSION
-  spec.authors = ["Dragon"]
-  spec.email = ["80807442+eepyhead@users.noreply.github.com"]
+  spec.authors = ["TODO"]
+  spec.email = ["TODO"]
 
   spec.summary = "TODO: Write a short summary, because RubyGems requires one."
   spec.description = "TODO: Write a longer description or delete this line."
@@ -35,4 +35,6 @@ Gem::Specification.new do |spec|
 
   spec.add_development_dependency "rack-test"
   spec.add_development_dependency "rspec"
+
+  spec.add_dependency "faraday", "~> 2.7"
 end
