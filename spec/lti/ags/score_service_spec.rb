@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "jwt"
 require "uri"
 
 ScoreServiceResponse = Struct.new(:code, :body)
@@ -19,6 +20,7 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
   let(:launch) do
     Lti::Advantage::Launch.new(
       payload: {
+        Lti::Advantage::Claims::DEPLOYMENT_ID => "deployment-123",
         Lti::Advantage::Claims::AGS_ENDPOINT => {
           "lineitem" => "https://platform.example/line_items/42",
           "scope" => [Lti::Advantage::AGS::Endpoint::SCORE_SCOPE]
@@ -72,6 +74,7 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
 
     token_request = requests[0]
     token_form = URI.decode_www_form(token_request[:body]).to_h
+    token_payload, = JWT.decode(token_form["client_assertion"], nil, false)
     expect(token_request[:url]).to eq("https://platform.example/oauth2/token")
     expect(token_request[:headers]["Content-Type"]).to eq("application/x-www-form-urlencoded")
     expect(token_form).to include(
@@ -80,6 +83,10 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
       "client_assertion_type" => "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
     )
     expect(token_form["client_assertion"]).not_to be_empty
+    expect(token_payload).to include(
+      "aud" => "https://platform.example/oauth2/token",
+      Lti::Advantage::Claims::DEPLOYMENT_ID => "deployment-123"
+    )
 
     score_request = requests[1]
     score_body = JSON.parse(score_request[:body])
@@ -93,6 +100,49 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
       "scoreGiven" => 9,
       "scoreMaximum" => 10
     )
+  end
+
+  it "uses registration token_audience in the access token assertion" do
+    registration_with_audience = Lti::Advantage::Registration.new(
+      issuer: "https://platform.example",
+      client_id: "client-123",
+      authorization_endpoint: "https://platform.example/oidc/auth",
+      token_endpoint: "https://platform.example/oauth2/token",
+      token_audience: "https://platform.example/oauth2/audience",
+      jwks_url: "https://platform.example/.well-known/jwks.json",
+      deployment_ids: ["deployment-123"]
+    )
+    launch_with_audience = Lti::Advantage::Launch.new(
+      payload: {
+        Lti::Advantage::Claims::DEPLOYMENT_ID => "deployment-123",
+        Lti::Advantage::Claims::AGS_ENDPOINT => {
+          "lineitem" => "https://platform.example/line_items/42",
+          "scope" => [Lti::Advantage::AGS::Endpoint::SCORE_SCOPE]
+        }
+      },
+      header: {},
+      registration: registration_with_audience
+    )
+    client = Lti::Advantage::AGS::ServiceClient.new(
+      launch: launch_with_audience,
+      key_pair: key_pair,
+      http_request: http_request
+    )
+
+    described_class.new(service_client: client).publish(
+      score: {
+        user_id: "user-123",
+        timestamp: "2026-03-11T20:10:06.123Z",
+        activity_progress: "Completed",
+        grading_progress: "FullyGraded",
+        score_given: 9,
+        score_maximum: 10
+      }
+    )
+
+    token_form = URI.decode_www_form(requests[0][:body]).to_h
+    token_payload, = JWT.decode(token_form["client_assertion"], nil, false)
+    expect(token_payload["aud"]).to eq("https://platform.example/oauth2/audience")
   end
 
   it "reuses the cached access token for repeated score publishes" do
@@ -113,7 +163,7 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
     expect(token_requests).to eq(1)
   end
 
-  it "allows repeated score publishes with the same timestamp" do
+  it "rejects repeated score publishes with the same timestamp" do
     score_payload = {
       user_id: "user-123",
       timestamp: "2026-03-11T20:10:06.123Z",
@@ -124,10 +174,11 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
     }
 
     score_service.publish(score: score_payload)
-    expect { score_service.publish(score: score_payload) }.not_to raise_error
+    expect { score_service.publish(score: score_payload) }
+      .to raise_error(Lti::Advantage::ValidationError, /later than the previous score/)
   end
 
-  it "allows out-of-order score publishes and delegates ordering rules to the platform" do
+  it "rejects out-of-order score publishes for the same user and line item" do
     score_service.publish(
       score: {
         user_id: "user-123",
@@ -150,7 +201,7 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
           score_maximum: 10
         }
       )
-    end.not_to raise_error
+    end.to raise_error(Lti::Advantage::ValidationError, /later than the previous score/)
   end
 
   it "raises when the launch is missing score scope" do

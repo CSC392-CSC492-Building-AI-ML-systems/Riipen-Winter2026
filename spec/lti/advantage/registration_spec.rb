@@ -14,6 +14,19 @@ RSpec.describe Lti::Advantage::Registration do
     expect(registration.token_endpoint).to eq("https://platform.example/login/oauth2/token")
   end
 
+  it "stores an optional token_audience" do
+    registration = described_class.new(
+      issuer: "https://platform.example",
+      client_id: "client-123",
+      authorization_endpoint: "https://platform.example/oidc/auth",
+      jwks_url: "https://platform.example/.well-known/jwks.json",
+      token_audience: "https://platform.example/login/oauth2/token-audience",
+      deployment_ids: ["deployment-123"]
+    )
+
+    expect(registration.token_audience).to eq("https://platform.example/login/oauth2/token-audience")
+  end
+
   it "allows token_endpoint to be omitted" do
     registration = described_class.new(
       issuer: "https://platform.example",
@@ -24,6 +37,18 @@ RSpec.describe Lti::Advantage::Registration do
     )
 
     expect(registration.token_endpoint).to be_nil
+  end
+
+  it "allows token_audience to be omitted" do
+    registration = described_class.new(
+      issuer: "https://platform.example",
+      client_id: "client-123",
+      authorization_endpoint: "https://platform.example/oidc/auth",
+      jwks_url: "https://platform.example/.well-known/jwks.json",
+      deployment_ids: ["deployment-123"]
+    )
+
+    expect(registration.token_audience).to be_nil
   end
 
   it "rejects blank token_endpoint values" do

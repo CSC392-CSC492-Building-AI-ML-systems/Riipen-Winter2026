@@ -1,6 +1,6 @@
 # Lti::Advantage
 
-`lti-advantage` provides a focused implementation of the LTI 1.3 core launch flow for Ruby applications, with initial support for LTI Advantage NRPS roster access.
+`lti-advantage` provides a focused implementation of the LTI 1.3 core launch flow for Ruby applications, with support for LTI Advantage NRPS roster access and AGS grade services.
 
 Implemented core behaviors:
 
@@ -12,6 +12,8 @@ Implemented core behaviors:
 - Read the NRPS claim from a validated launch
 - Request OAuth access tokens for LTI services with JWT client assertions
 - Fetch course memberships through the NRPS v2 memberships endpoint
+- Read the AGS endpoint claim from a validated launch
+- Publish scores, fetch results, and manage line items through AGS
 
 ## Installation
 
@@ -38,6 +40,8 @@ registration = Lti::Advantage::Registration.new(
   authorization_endpoint: "https://platform.example/oidc/auth",
   jwks_url: "https://platform.example/.well-known/jwks.json",
   token_endpoint: "https://platform.example/login/oauth2/token",
+  # Optional when the LMS expects a different JWT aud value.
+  token_audience: "https://platform.example/login/oauth2/token",
   deployment_ids: ["deployment-123"]
 )
 
@@ -97,6 +101,7 @@ access_token = Lti::Advantage::Services::AccessToken.new(
   key_pair: TOOL_KEY_PAIR,
   client_id: launch.registration.client_id,
   token_endpoint: token_endpoint,
+  token_audience: launch.registration.token_audience,
   scope: Lti::Advantage::Services::NamesRoleService::SCOPE,
   deployment_id: launch.deployment_id
 ).fetch
@@ -115,6 +120,36 @@ end
 `launch.nrps_available?` only reflects what the launch advertises: it checks for a valid `context_memberships_url` plus at least one supported NRPS service version. It does not verify your `Registration` configuration, token issuance, granted scopes, or downstream HTTP success.
 
 `AccessToken` uses the platform token endpoint configured on the selected `Registration`, and `NamesRoleService#memberships` normalizes short role filters like `"Learner"` to their IMS membership role URIs while validating `limit` and `resource_link_id`. `NamesRoleService#memberships_from_url` rejects cross-origin follow-up URLs by default so LMS bearer tokens stay scoped to the original NRPS origin; pass `enforce_same_origin: false` only if your platform legitimately paginates across multiple origins.
+
+### 4) Access AGS services
+
+```ruby
+return if launch.ags_endpoint.nil?
+
+ags = client.ags_service_client(
+  launch: launch,
+  key_pair: TOOL_KEY_PAIR
+)
+
+score_service = ags.score_service
+score_service.publish(
+  score: {
+    user_id: launch.subject,
+    timestamp: Time.now.utc.iso8601(3),
+    activity_progress: "Completed",
+    grading_progress: "FullyGraded",
+    score_given: 9,
+    score_maximum: 10
+  }
+)
+
+results = ags.result_service.list_all
+line_items = ags.line_item_service.list_all(limit: 50)
+```
+
+AGS launches may include both NRPS and AGS claims in the same `id_token`. `Client#validate_launch!` preserves both, so a single validated `Launch` can drive roster and grade workflows.
+
+`Client#ags_service_client` uses the `Registration` token settings, validates granted AGS scopes per request, caches access tokens by scope set, and tracks score timestamps per service client instance so duplicate or out-of-order publishes are rejected before they are sent.
 
 ## Demo app and tool JWKS
 

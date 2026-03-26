@@ -28,14 +28,20 @@ module Lti
         # @param key_pair [Lti::Advantage::KeyPair] the tool's RSA key pair
         # @param client_id [String] the tool's Client ID registered in the LMS
         # @param token_endpoint [String] the LMS OAuth2 token URL
+        # @param token_audience [String, nil] optional audience override for the
+        #   token endpoint client assertion
         # @param scope [String] space-separated list of OAuth2 scopes to request
         # @param deployment_id [String, nil] optional LTI deployment id to bind
         #   the token request to a specific deployment
-        def initialize(key_pair:, client_id:, token_endpoint:, scope:, deployment_id: nil)
+        def initialize(
+          key_pair:, client_id:, token_endpoint:, scope:, token_audience: nil,
+          deployment_id: nil
+        )
           @key_pair       = key_pair
           @client_id      = assert_presence("client_id", client_id)
           @token_endpoint = normalize_http_url("token_endpoint", token_endpoint)
           @scope          = assert_presence("scope", scope)
+          @token_audience = normalize_optional_string(token_audience, field_name: "token_audience")
           @deployment_id  = normalize_optional_string(deployment_id)
         end
 
@@ -86,7 +92,7 @@ module Lti
           payload = {
             iss: @client_id,
             sub: @client_id,
-            aud: @token_endpoint,
+            aud: @token_audience || @token_endpoint,
             iat: now,
             exp: now + 300, # 5 minutes
             jti: SecureRandom.uuid
@@ -144,11 +150,11 @@ module Lti
           raise ConfigurationError, "Invalid #{name}: #{e.message}"
         end
 
-        def normalize_optional_string(value)
+        def normalize_optional_string(value, field_name: "deployment_id")
           return nil if value.nil?
 
           string_value = value.to_s.strip
-          raise ConfigurationError, "deployment_id cannot be blank" if string_value.empty?
+          raise ConfigurationError, "#{field_name} cannot be blank" if string_value.empty?
 
           string_value
         end

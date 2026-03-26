@@ -3,6 +3,7 @@
 require "json"
 require "net/http"
 require "securerandom"
+require "time"
 require "uri"
 require "jwt"
 
@@ -24,6 +25,7 @@ module Lti
           @clock = clock
           @http_request = http_request || method(:default_http_request)
           @token_cache = {}
+          @published_scores = {}
         end
 
         def score_service
@@ -125,6 +127,21 @@ module Lti
           token_response[:access_token]
         end
 
+        def validate_score_publish!(score:, score_url:)
+          key = published_score_key(score_url: score_url, user_id: score.user_id)
+          current_timestamp = Time.iso8601(score.timestamp)
+          previous_timestamp = @published_scores[key]
+          return if previous_timestamp.nil? || current_timestamp > previous_timestamp
+
+          raise ValidationError,
+                "score timestamp must be later than the previous score for this user and line item"
+        end
+
+        def remember_score_publish!(score:, score_url:)
+          key = published_score_key(score_url: score_url, user_id: score.user_id)
+          @published_scores[key] = Time.iso8601(score.timestamp)
+        end
+
         private
 
         def request_access_token!(scopes)
@@ -152,16 +169,18 @@ module Lti
 
         def client_assertion
           now = @clock.call.to_i
+          payload = {
+            "iss" => registration.client_id,
+            "sub" => registration.client_id,
+            "aud" => registration.token_audience || registration.token_endpoint,
+            "iat" => now,
+            "exp" => now + DEFAULT_TOKEN_TTL,
+            "jti" => SecureRandom.uuid
+          }
+          payload[Claims::DEPLOYMENT_ID] = launch.deployment_id unless launch.deployment_id.nil?
 
           JWT.encode(
-            {
-              "iss" => registration.client_id,
-              "sub" => registration.client_id,
-              "aud" => registration.token_audience || registration.token_endpoint,
-              "iat" => now,
-              "exp" => now + DEFAULT_TOKEN_TTL,
-              "jti" => SecureRandom.uuid
-            },
+            payload,
             @key_pair.private_key,
             "RS256",
             kid: @key_pair.kid
@@ -248,6 +267,10 @@ module Lti
           headers.each { |name, value| request[name] = value }
           request.body = body unless body.nil?
           request
+        end
+
+        def published_score_key(score_url:, user_id:)
+          [score_url.to_s, user_id.to_s].freeze
         end
       end
     end

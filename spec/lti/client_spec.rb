@@ -73,4 +73,26 @@ RSpec.describe Lti::Advantage::Client do
     expect(params["lti_message_hint"]).to eq("opaque-message-hint")
     expect(params["lti_deployment_id"]).to eq("deployment-123")
   end
+
+  it "builds an AGS service client for a validated launch" do
+    launch = Lti::Advantage::Launch.new(
+      payload: {
+        Lti::Advantage::Claims::DEPLOYMENT_ID => "deployment-123",
+        Lti::Advantage::Claims::AGS_ENDPOINT => {
+          "lineitem" => "https://platform.example/line_items/42",
+          "scope" => [Lti::Advantage::AGS::Endpoint::SCORE_SCOPE]
+        }
+      },
+      header: {},
+      registration: registration
+    )
+
+    service_client = client.ags_service_client(
+      launch: launch,
+      key_pair: Lti::Advantage::KeyPair.new(nil, kid: "tool-key")
+    )
+
+    expect(service_client).to be_a(Lti::Advantage::AGS::ServiceClient)
+    expect(service_client.launch).to eq(launch)
+  end
 end

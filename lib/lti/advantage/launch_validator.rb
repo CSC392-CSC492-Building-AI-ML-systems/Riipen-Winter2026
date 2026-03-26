@@ -184,6 +184,7 @@ module Lti
 
         validate_audience_authorized_party!(payload, registration)
         validate_nonce_binding!(payload, state_data)
+        validate_ags_claim!(payload)
         validate_nrps_claim!(payload)
       end
 
@@ -229,6 +230,17 @@ module Lti
 
         validate_required_http_url!(claim["context_memberships_url"], "NRPS context_memberships_url")
         validate_string_array!(claim["service_versions"], "NRPS service_versions")
+      end
+
+      def validate_ags_claim!(payload)
+        claim = payload[Claims::AGS_ENDPOINT]
+        return if claim.nil?
+
+        raise ValidationError, "AGS endpoint claim must be an object" unless claim.is_a?(Hash)
+
+        validate_required_http_url!(claim["lineitems"], "AGS lineitems") if claim.key?("lineitems")
+        validate_required_http_url!(claim["lineitem"], "AGS lineitem") if claim.key?("lineitem")
+        validate_string_array!(claim["scope"], "AGS scope") if claim.key?("scope")
       end
 
       def validate_required_http_url!(value, field_name)

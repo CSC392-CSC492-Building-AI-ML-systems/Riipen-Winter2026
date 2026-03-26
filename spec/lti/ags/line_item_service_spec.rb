@@ -3,7 +3,7 @@
 require "uri"
 
 RSpec.describe Lti::Advantage::AGS::LineItemService do
-  response_class = Struct.new(:code, :body)
+  response_class = Struct.new(:code, :body, :link_header)
 
   let(:registration) do
     Lti::Advantage::Registration.new(
@@ -19,6 +19,7 @@ RSpec.describe Lti::Advantage::AGS::LineItemService do
   let(:launch) do
     Lti::Advantage::Launch.new(
       payload: {
+        Lti::Advantage::Claims::DEPLOYMENT_ID => "deployment-123",
         Lti::Advantage::Claims::AGS_ENDPOINT => {
           "lineitems" => "https://platform.example/contexts/1/line_items",
           "lineitem" => "https://platform.example/line_items/42",
@@ -37,8 +38,21 @@ RSpec.describe Lti::Advantage::AGS::LineItemService do
       id: "https://platform.example/line_items/42",
       label: "Homework 1",
       scoreMaximum: 100,
+      resourceId: "resource-123",
+      tag: "homework",
       resourceLinkId: "link-123",
+      startDateTime: "2026-03-11T20:10:06Z",
+      endDateTime: "2026-03-12T20:10:06+00:00",
+      gradesReleased: true,
       "https://example.com/ext" => "value"
+    }.to_json
+  end
+  let(:second_line_item_body) do
+    {
+      id: "https://platform.example/line_items/43",
+      label: "Homework 2",
+      scoreMaximum: 50,
+      resourceLinkId: "link-123"
     }.to_json
   end
   let(:http_request) do
@@ -50,6 +64,14 @@ RSpec.describe Lti::Advantage::AGS::LineItemService do
         response_class.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
       when [:get, "https://platform.example/contexts/1/line_items?resource_link_id=link-123&tag=homework&limit=5"]
         response_class.new("200", "[#{line_item_body}]")
+      when [:get, "https://platform.example/contexts/1/line_items?resource_link_id=link-123&tag=homework&limit=1"]
+        response_class.new(
+          "200",
+          "[#{line_item_body}]",
+          %(<https://platform.example/contexts/1/line_items?page=2>; rel="next")
+        )
+      when [:get, "https://platform.example/contexts/1/line_items?page=2"]
+        response_class.new("200", "[#{second_line_item_body}]")
       when [:get, "https://platform.example/line_items/42"]
         response_class.new("200", line_item_body)
       when [:post, "https://platform.example/contexts/1/line_items"]
@@ -73,6 +95,11 @@ RSpec.describe Lti::Advantage::AGS::LineItemService do
   end
 
   subject(:line_item_service) { described_class.new(service_client: service_client) }
+
+  it "exposes list_page and list_all for paginated collections" do
+    expect(described_class.public_instance_methods(false))
+      .to include(:list, :list_page, :list_all, :create, :fetch, :update, :delete)
+  end
 
   it "lists line items from the container url with optional filters" do
     items = line_item_service.list(resource_link_id: "link-123", tag: "homework", limit: 5)
@@ -113,6 +140,24 @@ RSpec.describe Lti::Advantage::AGS::LineItemService do
     expect(requests.last[:headers]["Accept"]).to eq("application/vnd.ims.lis.v2.lineitem+json")
   end
 
+  it "returns next_url when listing a paginated line item collection" do
+    page = line_item_service.list_page(resource_link_id: "link-123", tag: "homework", limit: 1)
+
+    expect(page[:line_items].length).to eq(1)
+    expect(page[:next_url]).to eq("https://platform.example/contexts/1/line_items?page=2")
+  end
+
+  it "follows Link rel=next when collecting all line items" do
+    items = line_item_service.list_all(resource_link_id: "link-123", tag: "homework", limit: 1)
+
+    expect(items.map(&:id)).to eq(
+      [
+        "https://platform.example/line_items/42",
+        "https://platform.example/line_items/43"
+      ]
+    )
+  end
+
   it "updates a line item with full replacement semantics" do
     item = line_item_service.update(
       line_item: {
@@ -131,9 +176,27 @@ RSpec.describe Lti::Advantage::AGS::LineItemService do
     expect(JSON.parse(request[:body])).to include(
       "label" => "Homework 1 - Updated",
       "scoreMaximum" => 125,
+      "resourceId" => "resource-123",
+      "tag" => "homework",
       "resourceLinkId" => "link-123",
+      "startDateTime" => "2026-03-11T20:10:06Z",
+      "endDateTime" => "2026-03-12T20:10:06+00:00",
+      "gradesReleased" => true,
       "https://example.com/ext" => "value"
     )
+  end
+
+  it "rejects line item id changes during update" do
+    expect do
+      line_item_service.update(
+        line_item: {
+          id: "https://platform.example/line_items/99",
+          label: "Homework 1 - Updated",
+          score_maximum: 125,
+          resource_link_id: "link-123"
+        }
+      )
+    end.to raise_error(Lti::Advantage::ValidationError, /line item id cannot be changed/)
   end
 
   it "rejects resourceLinkId changes during update" do

@@ -68,7 +68,7 @@ RSpec.describe Lti::Advantage::AGS::Score do
       grading_progress: "FullyGraded"
     )
 
-    expect { score.to_h }.to raise_error(Lti::Advantage::ValidationError, /ISO8601 timestamp with timezone/)
+    expect { score.to_h }.to raise_error(Lti::Advantage::ValidationError, /fractional seconds/)
   end
 
   it "accepts scores greater than scoreMaximum" do
@@ -87,7 +87,7 @@ RSpec.describe Lti::Advantage::AGS::Score do
     )
   end
 
-  it "accepts timestamps without sub-second precision when timezone is present" do
+  it "rejects timestamps without sub-second precision" do
     score = described_class.new(
       user_id: "user-123",
       timestamp: "2026-03-11T20:10:06Z",
@@ -95,7 +95,7 @@ RSpec.describe Lti::Advantage::AGS::Score do
       grading_progress: "FullyGraded"
     )
 
-    expect(score.to_h).to include("timestamp" => "2026-03-11T20:10:06Z")
+    expect { score.to_h }.to raise_error(Lti::Advantage::ValidationError, /fractional seconds/)
   end
 
   it "rejects submittedAt values earlier than startedAt" do

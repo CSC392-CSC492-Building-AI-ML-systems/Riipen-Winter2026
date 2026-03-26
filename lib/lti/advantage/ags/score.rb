@@ -8,7 +8,7 @@ module Lti
       class Score
         ACTIVITY_PROGRESS_VALUES = %w[Initialized Started InProgress Submitted Completed].freeze
         GRADING_PROGRESS_VALUES = %w[NotReady Failed Pending PendingManual FullyGraded].freeze
-        TIMEZONE_TIMESTAMP_FORMAT = /(?:Z|[+-]\d{2}:?\d{2})\z/
+        TIMEZONE_TIMESTAMP_FORMAT = /\.\d+(?:Z|[+-]\d{2}:?\d{2})\z/
 
         attr_reader :user_id, :timestamp, :activity_progress, :grading_progress,
                     :score_given, :score_maximum, :comment, :scoring_user_id, :submission
@@ -106,13 +106,13 @@ module Lti
         def parse_timestamp!(value, field:)
           unless TIMEZONE_TIMESTAMP_FORMAT.match?(value)
             raise ValidationError,
-                  "#{field} must be an ISO8601 timestamp with timezone"
+                  "#{field} must be an ISO8601 timestamp with timezone and fractional seconds"
           end
 
           Time.iso8601(value)
         rescue ArgumentError
           raise ValidationError,
-                "#{field} must be an ISO8601 timestamp with timezone"
+                "#{field} must be an ISO8601 timestamp with timezone and fractional seconds"
         end
 
         def normalize_submission(submission_value)

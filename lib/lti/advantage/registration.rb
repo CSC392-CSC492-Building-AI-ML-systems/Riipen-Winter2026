@@ -22,6 +22,7 @@ module Lti
       # authorization_endpoint:: Platform OIDC auth endpoint.
       # jwks_url:: Platform JWKS URL used to verify launch signatures.
       # token_endpoint:: Platform OAuth2 token endpoint used for LTI services.
+      # token_audience:: Optional audience override for service token requests.
       # deployment_ids:: Allowed deployment ids for this registration. If empty,
       #                  any non-empty deployment id is accepted.
       # algorithms:: Accepted JWT signature algorithms. Defaults to +RS256+.
@@ -78,6 +79,7 @@ module Lti
         uri.to_s
       rescue URI::InvalidURIError => e
         raise ArgumentError, "Invalid #{name}: #{e.message}"
+      end
 
       def optional_string(value)
         stripped = value.to_s.strip

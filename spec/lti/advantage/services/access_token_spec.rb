@@ -8,6 +8,7 @@ RSpec.describe Lti::Advantage::Services::AccessToken do
   let(:client_id) { "tool-client-id-12345" }
   let(:token_endpoint) { "https://lms.example.com/login/oauth2/token" }
   let(:scope) { Lti::Advantage::Services::NamesRoleService::SCOPE }
+  let(:token_audience) { nil }
   let(:deployment_id) { nil }
 
   subject do
@@ -16,6 +17,7 @@ RSpec.describe Lti::Advantage::Services::AccessToken do
       client_id: client_id,
       token_endpoint: token_endpoint,
       scope: scope,
+      token_audience: token_audience,
       deployment_id: deployment_id
     )
   end
@@ -96,6 +98,33 @@ RSpec.describe Lti::Advantage::Services::AccessToken do
         params = URI.decode_www_form(captured_body).to_h
         payload, = JWT.decode(params.fetch("client_assertion"), nil, false)
         expect(payload[Lti::Advantage::Claims::DEPLOYMENT_ID]).to eq("deployment-123")
+      end
+    end
+
+    context "when token_audience is provided" do
+      let(:token_audience) { "https://lms.example.com/oauth2/audience" }
+
+      it "uses token_audience as the JWT aud claim" do
+        captured_body = nil
+        response_double = double(
+          "resp",
+          status: 200,
+          body: { "access_token" => "tok", "token_type" => "Bearer" }.to_json
+        )
+
+        allow(Faraday).to receive(:post) do |_url, &block|
+          request = double("req")
+          allow(request).to receive(:headers).and_return({})
+          allow(request).to receive(:body=) { |value| captured_body = value }
+          block.call(request)
+          response_double
+        end
+
+        subject.fetch
+
+        params = URI.decode_www_form(captured_body).to_h
+        payload, = JWT.decode(params.fetch("client_assertion"), nil, false)
+        expect(payload["aud"]).to eq(token_audience)
       end
     end
 
@@ -202,6 +231,18 @@ RSpec.describe Lti::Advantage::Services::AccessToken do
           scope: "  "
         )
       end.to raise_error(Lti::Advantage::ConfigurationError, /scope/)
+    end
+
+    it "rejects blank token_audience values" do
+      expect do
+        described_class.new(
+          key_pair: key_pair,
+          client_id: client_id,
+          token_endpoint: token_endpoint,
+          scope: scope,
+          token_audience: "  "
+        )
+      end.to raise_error(Lti::Advantage::ConfigurationError, /token_audience/)
     end
 
     it "rejects blank deployment_id values" do

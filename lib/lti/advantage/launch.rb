@@ -65,7 +65,7 @@ module Lti
 
       def ags_endpoint
         claim = payload[Claims::AGS_ENDPOINT]
-        return nil if claim.nil?
+        return nil unless claim.is_a?(Hash)
 
         AGS::Endpoint.new(claim)
       end

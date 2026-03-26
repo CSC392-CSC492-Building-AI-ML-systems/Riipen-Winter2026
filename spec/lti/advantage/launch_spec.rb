@@ -23,6 +23,23 @@ RSpec.describe Lti::Advantage::Launch do
     }
   end
 
+  let(:ags_claim_data) do
+    {
+      "lineitems" => "https://lms.example.com/2344/line_items",
+      "lineitem" => "https://lms.example.com/2344/line_items/42",
+      "scope" => [
+        Lti::Advantage::AGS::Endpoint::LINEITEM_SCOPE,
+        Lti::Advantage::AGS::Endpoint::SCORE_SCOPE
+      ]
+    }
+  end
+
+  let(:payload_with_ags) do
+    payload_without_nrps.merge(
+      Lti::Advantage::Claims::AGS_ENDPOINT => ags_claim_data
+    )
+  end
+
   let(:payload_without_nrps) do
     payload_with_nrps.reject { |k, _| k == Lti::Advantage::Launch::NRPS_CLAIM }
   end
@@ -164,6 +181,32 @@ RSpec.describe Lti::Advantage::Launch do
     it "returns false when the NRPS claim is absent" do
       launch = described_class.new(payload: payload_without_nrps, header: {}, registration: registration)
       expect(launch.nrps_available?).to be false
+    end
+  end
+
+  describe "#ags_endpoint" do
+    it "returns an endpoint wrapper when the AGS claim is present" do
+      launch = described_class.new(payload: payload_with_ags, header: {}, registration: registration)
+
+      expect(launch.ags_endpoint).to be_a(Lti::Advantage::AGS::Endpoint)
+      expect(launch.ags_endpoint.lineitems_url).to eq("https://lms.example.com/2344/line_items")
+      expect(launch.ags_endpoint.lineitem_url).to eq("https://lms.example.com/2344/line_items/42")
+    end
+
+    it "returns nil when the AGS claim is absent" do
+      launch = described_class.new(payload: payload_without_nrps, header: {}, registration: registration)
+
+      expect(launch.ags_endpoint).to be_nil
+    end
+
+    it "returns nil when the AGS claim is malformed" do
+      launch = described_class.new(
+        payload: payload_with_ags.merge(Lti::Advantage::Claims::AGS_ENDPOINT => "not-an-object"),
+        header: {},
+        registration: registration
+      )
+
+      expect(launch.ags_endpoint).to be_nil
     end
   end
 end

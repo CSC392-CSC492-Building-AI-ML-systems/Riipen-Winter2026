@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "set"
 require "uri"
 
 module Lti
@@ -15,21 +16,68 @@ module Lti
         end
 
         def list(resource_link_id: nil, resource_id: nil, tag: nil, limit: nil, url: nil)
-          collection_url = @service_client.endpoint.lineitems_url!(lineitems_url: url, write: false)
+          page = list_page(
+            resource_link_id: resource_link_id,
+            resource_id: resource_id,
+            tag: tag,
+            limit: limit,
+            url: url
+          )
+
+          page[:line_items]
+        end
+
+        def list_page(resource_link_id: nil, resource_id: nil, tag: nil, limit: nil, url: nil, page_url: nil)
+          request_url = if page_url
+                          page_url
+                        else
+                          collection_url = @service_client.endpoint.lineitems_url!(lineitems_url: url, write: false)
+                          with_query(
+                            collection_url,
+                            resource_link_id: resource_link_id,
+                            resource_id: resource_id,
+                            tag: tag,
+                            limit: limit
+                          )
+                        end
+
           response = @service_client.request(
             method: :get,
-            url: with_query(
-              collection_url,
-              resource_link_id: resource_link_id,
-              resource_id: resource_id,
-              tag: tag,
-              limit: limit
-            ),
+            url: request_url,
             scopes: read_scopes,
             headers: { "Accept" => LINE_ITEM_CONTAINER_CONTENT_TYPE }
           )
 
-          parse_line_item_collection(response)
+          parse_line_item_page(response)
+        end
+
+        def list_all(resource_link_id: nil, resource_id: nil, tag: nil, limit: nil, url: nil)
+          line_items = []
+          page_url = nil
+          seen_page_urls = Set.new
+
+          loop do
+            if page_url
+              raise ServiceError, "AGS line item pagination cycle detected" if seen_page_urls.include?(page_url)
+
+              seen_page_urls.add(page_url)
+            end
+
+            page = list_page(
+              resource_link_id: page_url.nil? ? resource_link_id : nil,
+              resource_id: page_url.nil? ? resource_id : nil,
+              tag: page_url.nil? ? tag : nil,
+              limit: page_url.nil? ? limit : nil,
+              url: page_url.nil? ? url : nil,
+              page_url: page_url
+            )
+
+            line_items.concat(page[:line_items])
+            page_url = page[:next_url]
+            break if page_url.nil?
+          end
+
+          line_items
         end
 
         def create(line_item:, url: nil)
@@ -67,7 +115,13 @@ module Lti
             raise ValidationError, "resourceLinkId cannot be changed"
           end
 
-          merged_record = LineItem.from_h(current.extensions.merge(record.to_h))
+          if !current.id.nil? && !record.id.nil? && current.id != record.id
+            raise ValidationError, "line item id cannot be changed"
+          end
+
+          merged_payload = current.to_h.merge(record.to_h)
+          merged_payload["id"] = current.id unless current.id.nil?
+          merged_record = LineItem.from_h(merged_payload)
           response = @service_client.put_json(
             url: url,
             body: merged_record.to_h(include_id: false),
@@ -107,11 +161,14 @@ module Lti
           LineItem.from_h(parse_json_object(body))
         end
 
-        def parse_line_item_collection(response)
+        def parse_line_item_page(response)
           payload = JSON.parse(response.body)
           raise ServiceError, "AGS line item list response must be a JSON array" unless payload.is_a?(Array)
 
-          payload.map { |item| LineItem.from_h(item) }
+          {
+            line_items: payload.map { |item| LineItem.from_h(item) },
+            next_url: parse_next_url(read_link_header(response))
+          }
         rescue JSON::ParserError => e
           raise ServiceError, "AGS line item response is not valid JSON: #{e.message}"
         end
@@ -146,6 +203,27 @@ module Lti
           existing = URI.decode_www_form(String(uri.query))
           uri.query = URI.encode_www_form(existing + params.to_a)
           uri.to_s
+        end
+
+        def parse_next_url(link_header)
+          return nil if link_header.nil? || link_header.to_s.strip.empty?
+
+          link_header.to_s.split(",").each do |part|
+            url = part.match(/<([^>]+)>/)
+            rel = part.match(/rel\s*=\s*["']?next["']?/i)
+            return url[1].strip if url && rel
+          end
+
+          nil
+        end
+
+        def read_link_header(response)
+          return response.link_header if response.respond_to?(:link_header)
+          return response["Link"] if response.respond_to?(:[]) && response["Link"]
+
+          nil
+        rescue NameError
+          nil
         end
       end
     end
