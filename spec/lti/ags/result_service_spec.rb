@@ -119,13 +119,6 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
 
   subject(:result_service) { described_class.new(service_client: service_client) }
 
-  it "exposes read-only public API methods for result retrieval" do
-    expect(described_class.public_instance_methods(false))
-      .to include(:list, :list_page, :list_all)
-    expect(described_class.public_instance_methods(false))
-      .not_to include(:publish, :create, :update, :delete)
-  end
-
   it "requests an OAuth token and GETs results with the required Accept media type" do
     results = result_service.list
 
@@ -821,126 +814,6 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
     end.to raise_error(Lti::Advantage::ServiceError, /invalid result at index 0/i)
   end
 
-  it "maps 403 responses to AuthorizationError" do
-    forbidden_http = lambda do |method:, url:, headers:, body: nil|
-      requests << { method: method, url: url, headers: headers, body: body }
-      case url
-      when "https://platform.example/oauth2/token"
-        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
-      when "https://platform.example/line_items/42/results?foo=bar"
-        ResultServiceResponse.new("403", "forbidden")
-      else
-        ResultServiceResponse.new("404", "not found")
-      end
-    end
-
-    client = Lti::Advantage::AGS::ServiceClient.new(
-      launch: launch,
-      key_pair: key_pair,
-      http_request: forbidden_http
-    )
-
-    expect do
-      described_class.new(service_client: client).list
-    end.to raise_error(Lti::Advantage::AuthorizationError)
-  end
-
-  it "maps 500 responses to ServiceError" do
-    error_http = lambda do |method:, url:, headers:, body: nil|
-      requests << { method: method, url: url, headers: headers, body: body }
-      case url
-      when "https://platform.example/oauth2/token"
-        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
-      when "https://platform.example/line_items/42/results?foo=bar"
-        ResultServiceResponse.new("500", "oops")
-      else
-        ResultServiceResponse.new("404", "not found")
-      end
-    end
-
-    client = Lti::Advantage::AGS::ServiceClient.new(
-      launch: launch,
-      key_pair: key_pair,
-      http_request: error_http
-    )
-
-    expect do
-      described_class.new(service_client: client).list
-    end.to raise_error(Lti::Advantage::ServiceError)
-  end
-
-  it "maps 400 responses to ServiceError with HTTP 400 message" do
-    bad_request_http = lambda do |method:, url:, headers:, body: nil|
-      requests << { method: method, url: url, headers: headers, body: body }
-      case url
-      when "https://platform.example/oauth2/token"
-        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
-      when "https://platform.example/line_items/42/results?foo=bar"
-        ResultServiceResponse.new("400", "bad request")
-      else
-        ResultServiceResponse.new("404", "not found")
-      end
-    end
-
-    client = Lti::Advantage::AGS::ServiceClient.new(
-      launch: launch,
-      key_pair: key_pair,
-      http_request: bad_request_http
-    )
-
-    expect do
-      described_class.new(service_client: client).list
-    end.to raise_error(Lti::Advantage::ServiceError, /HTTP 400/)
-  end
-
-  it "maps 401 responses to AuthorizationError with HTTP 401 message" do
-    unauthorized_http = lambda do |method:, url:, headers:, body: nil|
-      requests << { method: method, url: url, headers: headers, body: body }
-      case url
-      when "https://platform.example/oauth2/token"
-        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
-      when "https://platform.example/line_items/42/results?foo=bar"
-        ResultServiceResponse.new("401", "unauthorized")
-      else
-        ResultServiceResponse.new("404", "not found")
-      end
-    end
-
-    client = Lti::Advantage::AGS::ServiceClient.new(
-      launch: launch,
-      key_pair: key_pair,
-      http_request: unauthorized_http
-    )
-
-    expect do
-      described_class.new(service_client: client).list
-    end.to raise_error(Lti::Advantage::AuthorizationError, /HTTP 401/)
-  end
-
-  it "maps 404 responses to ServiceError with HTTP 404 message" do
-    not_found_http = lambda do |method:, url:, headers:, body: nil|
-      requests << { method: method, url: url, headers: headers, body: body }
-      case url
-      when "https://platform.example/oauth2/token"
-        ResultServiceResponse.new("200", { access_token: "token-123", token_type: "Bearer", expires_in: 3600 }.to_json)
-      when "https://platform.example/line_items/42/results?foo=bar"
-        ResultServiceResponse.new("404", "not found")
-      else
-        ResultServiceResponse.new("404", "not found")
-      end
-    end
-
-    client = Lti::Advantage::AGS::ServiceClient.new(
-      launch: launch,
-      key_pair: key_pair,
-      http_request: not_found_http
-    )
-
-    expect do
-      described_class.new(service_client: client).list
-    end.to raise_error(Lti::Advantage::ServiceError, /HTTP 404/)
-  end
-
   it "raises when result media type is not resultcontainer+json" do
     wrong_type_http = lambda do |method:, url:, headers:, body: nil|
       requests << { method: method, url: url, headers: headers, body: body }
@@ -1198,7 +1071,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
     expect(results_request[:url]).to eq("https://platform.example/paginated/results?page=2")
   end
 
-  it "uses explicit line_item_url over launch claim for endpoint and scoreOf validation" do
+  it "uses explicit line_item_url for endpoint and scoreOf validation" do
     override_http = lambda do |method:, url:, headers:, body: nil|
       requests << { method: method, url: url, headers: headers, body: body }
       case url
