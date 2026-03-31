@@ -3,13 +3,22 @@
 module Lti
   module Advantage
     module AGS
+      # Client for AGS score publishing.
       class ScoreService
+        # Media type for AGS score publish payloads.
         SCORE_CONTENT_TYPE = "application/vnd.ims.lis.v1.score+json"
 
+        # service_client:: {ServiceClient} used for authorization and HTTP.
         def initialize(service_client:)
           @service_client = service_client
         end
 
+        # Publishes a score to the AGS score endpoint.
+        #
+        # score:: {Score} instance or Hash accepted by {Score.from_h}.
+        # line_item_url:: Optional explicit line item URL override.
+        #
+        # Returns the underlying HTTP response object.
         def publish(score:, line_item_url: nil)
           score_record = score.is_a?(Score) ? score : Score.from_h(score)
           score_record.validate!

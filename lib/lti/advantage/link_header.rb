@@ -4,9 +4,20 @@ require "uri"
 
 module Lti
   module Advantage
+    # Utilities for parsing RFC 8288 Link headers returned by LTI services.
+    #
+    # The AGS and NRPS clients use this helper to resolve pagination and other
+    # relation URLs from HTTP response headers.
     module LinkHeader
       module_function
 
+      # Returns the first URL for the requested Link relation.
+      #
+      # header:: Raw HTTP +Link+ header String.
+      # relation:: Relation name to locate, such as <tt>"next"</tt>.
+      # base_url:: Optional absolute URL used to resolve relative links.
+      #
+      # Returns the resolved URL String or +nil+ when the relation is absent.
       def relation_url(header, relation, base_url: nil)
         target_relation = relation.to_s.downcase
 
@@ -20,6 +31,13 @@ module Lti
         nil
       end
 
+      # Parses a raw Link header into an Array of entries.
+      #
+      # header:: Raw HTTP +Link+ header String.
+      # base_url:: Optional absolute URL used to resolve relative links.
+      #
+      # Returns an Array of Hashes containing +:url+ and +:params+ keys.
+      # Raises +ArgumentError+ when the header is malformed.
       def parse_entries(header, base_url: nil)
         return [] if header.nil? || header.to_s.empty?
 
@@ -39,6 +57,7 @@ module Lti
         entries
       end
 
+      # :nodoc:
       def skip_link_delimiters(header, index)
         index += 1 while index < header.length && [",", " ", "\t"].include?(header[index])
 
@@ -46,6 +65,7 @@ module Lti
       end
       private_class_method :skip_link_delimiters
 
+      # :nodoc:
       def parse_link_url(header, index)
         closing_index = header.index(">", index + 1)
         raise ArgumentError, "Malformed Link header" if closing_index.nil?
@@ -54,6 +74,7 @@ module Lti
       end
       private_class_method :parse_link_url
 
+      # :nodoc:
       def parse_link_params(header, index)
         params = {}
 
@@ -71,6 +92,7 @@ module Lti
       end
       private_class_method :parse_link_params
 
+      # :nodoc:
       def skip_optional_whitespace(header, index)
         index += 1 while index < header.length && [" ", "\t"].include?(header[index])
 
@@ -78,6 +100,7 @@ module Lti
       end
       private_class_method :skip_optional_whitespace
 
+      # :nodoc:
       def parse_link_param(header, index)
         name_start = index
         index += 1 while index < header.length && !["=", ";", ","].include?(header[index])
@@ -94,6 +117,7 @@ module Lti
       end
       private_class_method :parse_link_param
 
+      # :nodoc:
       def parse_link_param_value(header, index)
         return ["", index] if index >= header.length
 
@@ -108,6 +132,7 @@ module Lti
       end
       private_class_method :parse_link_param_value
 
+      # :nodoc:
       def parse_quoted_link_param_value(header, index, quote_char:)
         value = +""
 
@@ -131,6 +156,7 @@ module Lti
       end
       private_class_method :parse_quoted_link_param_value
 
+      # :nodoc:
       def resolve_url(url, base_url: nil)
         stripped = url.to_s.strip
         return stripped if stripped.empty? || base_url.nil?

@@ -5,10 +5,21 @@ require "time"
 module Lti
   module Advantage
     module AGS
+      # Value object for AGS score publish payloads.
+      #
+      # Instances normalize caller input and validate the fields required by the
+      # AGS score media type before publishing.
       class Score
+        # Allowed values for the AGS +activityProgress+ field.
         ACTIVITY_PROGRESS_VALUES = %w[Initialized Started InProgress Submitted Completed].freeze
+
+        # Allowed values for the AGS +gradingProgress+ field.
         GRADING_PROGRESS_VALUES = %w[NotReady Failed Pending PendingManual FullyGraded].freeze
+
+        # Regular expression enforcing RFC3339 timestamps with fractional seconds.
         TIMEZONE_TIMESTAMP_FORMAT = /\.\d+(?:Z|[+-]\d{2}(?::\d{2})?)\z/
+
+        # Accepted input keys for Hash-based construction.
         INPUT_KEYS = {
           user_id: %w[user_id userId],
           timestamp: %w[timestamp],
@@ -21,9 +32,42 @@ module Lti
           submission: %w[submission]
         }.freeze
 
-        attr_reader :user_id, :timestamp, :activity_progress, :grading_progress,
-                    :score_given, :score_maximum, :comment, :scoring_user_id, :submission
+        # Platform-scoped subject identifier for the scored user.
+        attr_reader :user_id
 
+        # RFC3339 timestamp with fractional seconds describing when the score was generated.
+        attr_reader :timestamp
+
+        # AGS activity progress value.
+        attr_reader :activity_progress
+
+        # AGS grading progress value.
+        attr_reader :grading_progress
+
+        # Numeric score awarded to the user, when present.
+        attr_reader :score_given
+
+        # Numeric maximum score associated with +score_given+, when present.
+        attr_reader :score_maximum
+
+        # Optional instructor or tool comment.
+        attr_reader :comment
+
+        # Optional platform-scoped identifier for the scoring user.
+        attr_reader :scoring_user_id
+
+        # Optional submission timing metadata Hash.
+        attr_reader :submission
+
+        # user_id:: Platform-scoped subject identifier.
+        # timestamp:: RFC3339 timestamp with fractional seconds.
+        # activity_progress:: AGS activity progress enum value.
+        # grading_progress:: AGS grading progress enum value.
+        # score_given:: Optional numeric score.
+        # score_maximum:: Optional numeric maximum score.
+        # comment:: Optional score comment.
+        # scoring_user_id:: Optional scoring user identifier.
+        # submission:: Optional Hash with +startedAt+ and/or +submittedAt+.
         def initialize(
           user_id:, timestamp:, activity_progress:, grading_progress:, score_given: nil,
           score_maximum: nil, comment: nil, scoring_user_id: nil, submission: nil
@@ -39,6 +83,7 @@ module Lti
           @submission = normalize_submission(submission)
         end
 
+        # Builds a {Score} from a serialized AGS score Hash or snake_case Hash.
         def self.from_h(payload)
           hash = stringify_keys(payload)
 
@@ -57,10 +102,12 @@ module Lti
           raise ValidationError, "score must be an object"
         end
 
+        # Returns a copy of +hash+ with String keys.
         def self.stringify_keys(hash)
           Hash(hash).transform_keys(&:to_s)
         end
 
+        # Returns the first matching value in +hash+ for the provided +keys+.
         def self.fetch_value(hash, *keys)
           keys.each do |key|
             return hash[key] if hash.key?(key)
@@ -69,6 +116,7 @@ module Lti
           nil
         end
 
+        # Returns the score serialized in AGS wire format.
         def to_h
           validate!
 
@@ -85,6 +133,8 @@ module Lti
           }.compact
         end
 
+        # Validates the score payload and raises {ValidationError} when a field
+        # is missing or malformed.
         def validate!
           raise ValidationError, "userId is required" if user_id.empty?
 

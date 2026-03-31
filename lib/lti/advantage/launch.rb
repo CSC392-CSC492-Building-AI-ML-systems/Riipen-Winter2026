@@ -14,9 +14,15 @@ module Lti
       # registration:: {Registration} selected for this launch.
       attr_reader :payload, :header, :registration
 
+      # Claim URI for the Names and Role Provisioning Service claim.
       NRPS_CLAIM = "https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice"
+
+      # NRPS service versions understood by this gem.
       SUPPORTED_NRPS_SERVICE_VERSIONS = ["2.0"].freeze
 
+      # payload:: JWT payload hash after validation.
+      # header:: JWT header hash after validation.
+      # registration:: {Registration} selected for this launch.
       def initialize(payload:, header:, registration:)
         @payload = payload
         @header = header
@@ -63,6 +69,8 @@ module Lti
         resource_link["id"]
       end
 
+      # Returns the AGS endpoint claim wrapped in an {AGS::Endpoint} helper.
+      # Returns +nil+ when the launch did not advertise AGS.
       def ags_endpoint
         claim = payload[Claims::AGS_ENDPOINT]
         return nil unless claim.is_a?(Hash)
@@ -70,12 +78,14 @@ module Lti
         AGS::Endpoint.new(claim)
       end
 
+      # Returns +true+ when the launch advertises at least one usable AGS
+      # endpoint and at least one granted AGS scope.
       def ags_available?
         endpoint = ags_endpoint
         !endpoint.nil? && endpoint.available?
       end
 
-      # Convenience accessor for any arbitrary claim URI or key.
+      # Returns the raw claim value for any arbitrary claim URI or key.
       def [](claim)
         payload[claim]
       end

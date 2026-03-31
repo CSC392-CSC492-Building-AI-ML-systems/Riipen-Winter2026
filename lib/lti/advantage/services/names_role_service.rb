@@ -13,24 +13,28 @@ module Lti
       # Fetches course rosters from the LMS using the endpoint advertised in the
       # +namesroleservice+ claim of the LTI launch token.
       #
-      # @example Fetch all members
+      # Fetch all members:
+      #
       #   service = Lti::Advantage::Services::NamesRoleService.new(
       #     memberships_url: launch.context_memberships_url,
       #     access_token:    bearer_token
       #   )
       #   result = service.memberships
-      #   result.members.each { |m| puts "#{m.user_id} - #{m.roles}" }
+      #   result.members.each { |member| puts "#{member.user_id} - #{member.roles}" }
       #
-      # @example Fetch only learners
+      # Filter to learners:
+      #
       #   result = service.memberships(role: "Learner")
       #
-      # @example Paginate manually
+      # Paginate manually:
+      #
       #   result = service.memberships(limit: 50)
       #   while result.next_page_url
       #     result = service.memberships_from_url(result.next_page_url)
       #   end
       #
-      # @example Resource-link scope
+      # Scope to one resource link:
+      #
       #   result = service.memberships(resource_link_id: "49566-rkk96")
       class NamesRoleService
         # OAuth2 scope required for all NRPS requests
@@ -39,14 +43,30 @@ module Lti
         # NRPS media type sent in the Accept header
         MEDIA_TYPE = "application/vnd.ims.lti-nrps.v2.membershipcontainer+json"
 
+        # Base URI for short-form NRPS membership roles.
         MEMBERSHIP_ROLE_VOCAB = "http://purl.imsglobal.org/vocab/lis/v2/membership#"
 
+        # Default safety cap for {#all_members} pagination.
         DEFAULT_MAX_PAGES = 100
 
         # Simple value object returned by every #memberships call.
         class MembershipsResult
-          attr_reader :context, :members, :next_page_url, :differences_url
+          # Context object returned by the LMS, when present.
+          attr_reader :context
 
+          # Array of {Lti::Advantage::Membership} objects for the current page.
+          attr_reader :members
+
+          # Absolute URL for the next page of memberships, when present.
+          attr_reader :next_page_url
+
+          # Absolute URL for the LMS differences feed, when present.
+          attr_reader :differences_url
+
+          # context:: Optional context Hash returned by the LMS.
+          # members:: Array of {Lti::Advantage::Membership} objects.
+          # next_page_url:: Optional URL for the next memberships page.
+          # differences_url:: Optional URL for the NRPS differences feed.
           def initialize(context:, members:, next_page_url:, differences_url:)
             @context = context
             @members = members
@@ -55,16 +75,10 @@ module Lti
           end
         end
 
-        # @param memberships_url [String] the +context_memberships_url+ from the
-        #   NRPS launch claim
-        # @param access_token [String] a valid bearer token with the NRPS scope
-        # @param enforce_same_origin [Boolean] when +true+, reject follow-up page
-        #   and differences URLs whose origin differs from the original
-        #   +memberships_url+; defaults to +true+ so bearer tokens are not sent
-        #   to a different origin unless explicitly opted in
-        # @param allowed_origins [Array<String>, String, nil] additional absolute
-        #   HTTP(S) origins or URLs allowed for follow-up page/differences links
-        #   while same-origin enforcement remains enabled
+        # memberships_url:: The +context_memberships_url+ from the NRPS launch claim.
+        # access_token:: A valid bearer token with the NRPS scope.
+        # enforce_same_origin:: When +true+, reject follow-up page and differences URLs whose origin differs from the original +memberships_url+. This defaults to +true+ so bearer tokens are not sent to a different origin unless explicitly opted in.
+        # allowed_origins:: Additional absolute HTTP(S) origins or URLs allowed for follow-up page and differences links while same-origin enforcement remains enabled.
         def initialize(memberships_url:, access_token:, enforce_same_origin: true, allowed_origins: nil)
           @memberships_url = normalize_memberships_url(memberships_url)
           @memberships_origin = request_origin(@memberships_url)
@@ -75,17 +89,17 @@ module Lti
 
         # Fetches memberships from the service.
         #
-        # @param role [String, nil] optional role URI or short name to filter by
-        #   (e.g. "Learner" or the full URI). Short names are normalized to the
-        #   IMS LIS membership vocabulary.
-        # @param limit [Integer, nil] hint to the LMS about page size; must be a
-        #   positive integer if supplied. The LMS may return more or fewer
-        #   members than requested.
-        # @param resource_link_id [String, nil] when supplied, appends +rlid+
-        #   to scope the request to a specific Resource Link; blank values are
-        #   rejected
-        # @return [MembershipsResult]
-        # @raise [Lti::Advantage::Error] on HTTP or parse failures
+        # role:: Optional role URI or short name to filter by, for example
+        #        +Learner+ or the full URI. Short names are normalized to the
+        #        IMS LIS membership vocabulary.
+        # limit:: Optional positive integer page-size hint. The LMS may return
+        #         more or fewer members than requested.
+        # resource_link_id:: Optional resource link id. When supplied, appends
+        #                    +rlid+ to scope the request to a specific resource
+        #                    link.
+        #
+        # Returns a MembershipsResult.
+        # Raises +Error+ on HTTP or parse failures.
         def memberships(role: nil, limit: nil, resource_link_id: nil)
           request_url = build_memberships_url(@memberships_url, query_params(role, limit, resource_link_id))
           memberships_from_url(request_url)
@@ -94,12 +108,13 @@ module Lti
         # Fetches a page of memberships from an arbitrary URL. Use this for
         # pagination when following +next_page_url+ from a previous result.
         #
-        # @param url [String] fully-resolved memberships URL (may include query
-        #   string from a +rel="next"+ link header). Cross-origin URLs are
-        #   rejected unless the service was initialized with
-        #   +enforce_same_origin: false+.
-        # @return [MembershipsResult]
-        # @raise [Lti::Advantage::Error] on HTTP or parse failures
+        # url:: Fully-resolved memberships URL, including any query string from
+        #       a +rel="next"+ Link header. Cross-origin URLs are rejected
+        #       unless the service was initialized with
+        #       +enforce_same_origin: false+.
+        #
+        # Returns a MembershipsResult.
+        # Raises +Error+ on HTTP or parse failures.
         def memberships_from_url(url)
           request_url = normalize_request_url(url)
 
@@ -115,13 +130,17 @@ module Lti
           raise Error, "Network error fetching memberships: #{e.message}"
         end
 
-        # Convenience: fetches ALL members across every page and returns a
-        # single flat array. Use with care on large courses.
+        # Convenience method that fetches all members across every page and
+        # returns a single flat array. Use with care on large courses.
         #
-        # @param role [String, nil] role filter forwarded to each page request
-        # @param max_pages [Integer] maximum number of pages to follow before
-        #   aborting the pagination loop
-        # @return [Array<Lti::Advantage::Membership>]
+        # role:: Optional role filter forwarded to the first page request.
+        # limit:: Optional page-size hint forwarded to the first page request.
+        # resource_link_id:: Optional resource link id forwarded to the first
+        #                    page request.
+        # max_pages:: Maximum number of pages to follow before aborting the
+        #             pagination loop.
+        #
+        # Returns an Array of +Lti::Advantage::Membership+ objects.
         def all_members(role: nil, limit: nil, resource_link_id: nil, max_pages: DEFAULT_MAX_PAGES)
           normalized_max_pages = normalize_max_pages(max_pages)
           request_url = build_memberships_url(@memberships_url, query_params(role, limit, resource_link_id))
@@ -150,11 +169,12 @@ module Lti
 
         private
 
-        # Parses the Faraday response into a +MembershipsResult+.
+        # Parses the Faraday response into a MembershipsResult.
         #
-        # @param response [Faraday::Response]
-        # @param request_url [String]
-        # @return [MembershipsResult]
+        # response:: The Faraday response to parse.
+        # request_url:: Resolved request URL used to interpret Link headers.
+        #
+        # Returns a MembershipsResult.
         def parse_response(response, request_url:)
           validate_content_type!(response)
           body = parse_json_body(response.body)

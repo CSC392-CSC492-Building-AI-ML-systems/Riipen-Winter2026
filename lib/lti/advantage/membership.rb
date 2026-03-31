@@ -8,46 +8,46 @@ module Lti
     # All fields beyond +user_id+ and +roles+ are optional – the LMS only shares
     # them when the Platform has given explicit consent.
     class Membership
+      # Allowed NRPS membership status values.
       ALLOWED_STATUSES = %w[Active Inactive Deleted].freeze
 
-      # @return [String] the user's platform-scoped unique identifier (sub)
+      # The user's platform-scoped unique identifier (+sub+).
       attr_reader :user_id
 
-      # @return [Array<String>] list of LTI role URIs or abbreviated role names
+      # List of LTI role URIs or abbreviated role names.
       attr_reader :roles
 
-      # @return [String] "Active", "Inactive", or "Deleted"
+      # Membership status: +Active+, +Inactive+, or +Deleted+.
       attr_reader :status
 
-      # @return [String, nil] full display name (consent-gated)
+      # Full display name, when consent allows it.
       attr_reader :name
 
-      # @return [String, nil] email address (consent-gated)
+      # Email address, when consent allows it.
       attr_reader :email
 
-      # @return [String, nil] given / first name (consent-gated)
+      # Given or first name, when consent allows it.
       attr_reader :given_name
 
-      # @return [String, nil] family / last name (consent-gated)
+      # Family or last name, when consent allows it.
       attr_reader :family_name
 
-      # @return [String, nil] middle name (consent-gated)
+      # Middle name, when consent allows it.
       attr_reader :middle_name
 
-      # @return [String, nil] URL of the user's profile picture (consent-gated)
+      # URL of the user's profile picture, when consent allows it.
       attr_reader :picture
 
-      # @return [String, nil] SIS person source ID (consent-gated)
+      # SIS person source id, when consent allows it.
       attr_reader :lis_person_sourcedid
 
-      # @return [String, nil] legacy LTI 1.1 user ID (consent-gated)
+      # Legacy LTI 1.1 user id, when consent allows it.
       attr_reader :lti11_legacy_user_id
 
-      # @return [Array<Hash>, nil] per-resource-link message data (NRPS resource
-      #   link endpoint only)
+      # Per-resource-link message data from NRPS resource-link responses.
       attr_reader :message
 
-      # @param raw [Hash] a single member object from the NRPS JSON response
+      # raw:: Single member object from the NRPS JSON response.
       def initialize(raw)
         raise Error, "Membership entry must be an object" unless raw.is_a?(Hash)
 
@@ -65,29 +65,28 @@ module Lti
         @message              = raw["message"]
       end
 
-      # @return [Boolean] true when the membership is currently active
+      # Returns +true+ when the membership is currently active.
       def active?
         @status == "Active"
       end
 
-      # @return [Boolean] true when the membership has been deleted
-      # (only appears in diff responses)
+      # Returns +true+ when the membership has been deleted.
+      # Deleted memberships only appear in diff responses.
       def deleted?
         @status == "Deleted"
       end
 
-      # Returns true when the member holds the given role.
-      # Accepts both full URIs and the short form (e.g. "Learner").
+      # Returns +true+ when the member holds the given role.
+      # Accepts both full URIs and short names such as +Learner+.
       #
-      # @param role [String] role URI or short name
-      # @return [Boolean]
+      # role:: Role URI or short name.
       def role?(role)
         @roles.any? { |r| r == role || r.end_with?("##{role}") }
       end
 
       alias has_role? role?
 
-      # @return [String]
+      # Returns a concise debug representation.
       def inspect
         "#<#{self.class.name} user_id=#{@user_id.inspect} " \
           "status=#{@status.inspect} roles=#{@roles.inspect}>"

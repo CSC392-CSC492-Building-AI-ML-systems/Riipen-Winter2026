@@ -8,6 +8,7 @@ require "uri"
 
 module Lti
   module Advantage
+    # Namespace for service-specific token and API clients.
     module Services
       # Obtains a short-lived OAuth 2.0 access token from the LMS using the
       # JWT client-credentials grant defined in the LTI 1.3 security framework.
@@ -15,7 +16,8 @@ module Lti
       # The tool signs a JWT assertion with its own private key; the LMS verifies
       # it via the tool's JWKS endpoint and returns a bearer token.
       #
-      # @example
+      # Example:
+      #
       #   token_service = Lti::Advantage::Services::AccessToken.new(
       #     key_pair:       TOOL_KEY_PAIR,
       #     client_id:      CLIENT_ID,
@@ -25,14 +27,14 @@ module Lti
       #   )
       #   bearer = token_service.fetch
       class AccessToken
-        # @param key_pair [Lti::Advantage::KeyPair] the tool's RSA key pair
-        # @param client_id [String] the tool's Client ID registered in the LMS
-        # @param token_endpoint [String] the LMS OAuth2 token URL
-        # @param token_audience [String, nil] optional audience override for the
-        #   token endpoint client assertion
-        # @param scope [String] space-separated list of OAuth2 scopes to request
-        # @param deployment_id [String, nil] optional LTI deployment id to bind
-        #   the token request to a specific deployment
+        # key_pair:: The tool's key pair used to sign JWT client assertions.
+        # client_id:: The tool's client id registered in the LMS.
+        # token_endpoint:: The LMS OAuth2 token URL.
+        # token_audience:: Optional audience override for the token endpoint
+        #                  client assertion.
+        # scope:: Space-separated list of OAuth2 scopes to request.
+        # deployment_id:: Optional LTI deployment id to bind the token request to
+        #                 a specific deployment.
         def initialize(
           key_pair:, client_id:, token_endpoint:, scope:, token_audience: nil,
           deployment_id: nil
@@ -47,8 +49,8 @@ module Lti
 
         # Requests a bearer token from the LMS.
         #
-        # @return [String] the raw access token string
-        # @raise [Lti::Advantage::Error] on network failure or non-200 response
+        # Returns the raw access token string.
+        # Raises +Error+ on network failure, invalid JSON, or non-200 response.
         def fetch
           response = Faraday.post(@token_endpoint) do |req|
             req.headers["Content-Type"] = "application/x-www-form-urlencoded"
@@ -73,7 +75,8 @@ module Lti
         private
 
         # Builds the POST body params for the client_credentials grant.
-        # @return [Hash]
+        #
+        # Returns a Hash.
         def token_request_params
           {
             grant_type: "client_credentials",
@@ -86,7 +89,7 @@ module Lti
         # Creates a short-lived JWT signed with the tool's private key.
         # The LMS uses the tool's JWKS to verify this assertion.
         #
-        # @return [String] signed JWT
+        # Returns a signed JWT string.
         def build_client_assertion
           now = Time.now.to_i
           payload = {

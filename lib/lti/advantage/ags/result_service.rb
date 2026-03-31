@@ -9,12 +9,19 @@ module Lti
       # Client for the LTI AGS Result service (read-only grades for a line item).
       # https://www.imsglobal.org/spec/lti-ags/v2p0/#result-service
       class ResultService
+        # Media type for AGS result collections.
         RESULT_CONTAINER_TYPE = "application/vnd.ims.lis.v2.resultcontainer+json"
 
+        # service_client:: {ServiceClient} used for authorization and HTTP.
         def initialize(service_client:)
           @service_client = service_client
         end
 
+        # Returns one page of results as an Array.
+        #
+        # line_item_url:: Optional explicit line item URL override.
+        # user_id:: Optional filter for a single user.
+        # limit:: Optional positive integer page-size hint.
         def list(line_item_url: nil, user_id: nil, limit: nil)
           url = expected_line_item_url(line_item_url)
           page = list_page(
@@ -26,6 +33,9 @@ module Lti
           page[:results]
         end
 
+        # Returns a paginated result response Hash.
+        #
+        # The returned Hash includes +:results+ and +:next_url+.
         def list_page(line_item_url: nil, user_id: nil, limit: nil, page_url: nil, expected_line_item_url: nil)
           expected_line_item_url ||= expected_line_item_url(line_item_url)
           url = page_url || build_results_url(
@@ -58,6 +68,7 @@ module Lti
           { results: results, next_url: next_url }
         end
 
+        # Follows every available page and returns all results.
         def list_all(line_item_url: nil, user_id: nil, limit: nil)
           all_pages = []
           page_url = nil

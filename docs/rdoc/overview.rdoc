@@ -20,11 +20,55 @@ Use +Lti::Advantage::Client+ as the high-level API.
     issuer: "https://platform.example",
     client_id: "client-123",
     authorization_endpoint: "https://platform.example/oidc/auth",
+    token_endpoint: "https://platform.example/login/oauth2/token",
     jwks_url: "https://platform.example/.well-known/jwks.json",
     deployment_ids: ["deployment-123"]
   )
 
   client = Lti::Advantage::Client.new(registrations: [registration])
+
+Include +token_endpoint+ when you plan to call NRPS or AGS services after
+launch validation.
+
+== Service Access
+
+After a launch has been validated, the resulting +Lti::Advantage::Launch+
+exposes the service claims advertised by the platform.
+
+For NRPS roster access, request a bearer token and call the memberships
+service:
+
+  access_token = Lti::Advantage::Services::AccessToken.new(
+    key_pair: TOOL_KEY_PAIR,
+    client_id: launch.registration.client_id,
+    token_endpoint: launch.registration.token_endpoint,
+    token_audience: launch.registration.token_audience,
+    scope: Lti::Advantage::Services::NamesRoleService::SCOPE,
+    deployment_id: launch.deployment_id
+  ).fetch
+
+  memberships = Lti::Advantage::Services::NamesRoleService.new(
+    memberships_url: launch.context_memberships_url,
+    access_token: access_token
+  )
+
+  memberships.memberships.members
+
+For AGS grade services, build a service client from the validated launch:
+
+  ags = client.ags_service_client(launch: launch, key_pair: TOOL_KEY_PAIR)
+  ags.score_service.publish(score: score_hash)
+  ags.result_service.list_all
+  ags.line_item_service.list_all
+
+== Tool JWKS
+
+Service token exchange uses JWT client assertions signed with your tool's
+private key. Publish the corresponding public key as a JWK or JWKS document so
+the platform can verify those assertions.
+
+  key_pair = Lti::Advantage::KeyPair.new(ENV["TOOL_PRIVATE_KEY_PEM"], kid: "tool-key")
+  jwks_payload = { keys: [key_pair.public_jwk] }
 
 == Login Initiation Endpoint (Tool)
 
@@ -77,7 +121,22 @@ your infrastructure:
 
 * +Lti::Advantage::Client+
 * +Lti::Advantage::Registration+
+* +Lti::Advantage::RegistrationStore+
 * +Lti::Advantage::Launch+
+* +Lti::Advantage::KeyPair+
+* +Lti::Advantage::JwksRepository+
+* +Lti::Advantage::LinkHeader+
 * +Lti::Advantage::OIDC::LoginInitiation+
 * +Lti::Advantage::OIDC::AuthenticationRequest+
 * +Lti::Advantage::Store::MemoryStore+
+* +Lti::Advantage::Membership+
+* +Lti::Advantage::Services::AccessToken+
+* +Lti::Advantage::Services::NamesRoleService+
+* +Lti::Advantage::AGS::Endpoint+
+* +Lti::Advantage::AGS::ServiceClient+
+* +Lti::Advantage::AGS::Score+
+* +Lti::Advantage::AGS::ScoreService+
+* +Lti::Advantage::AGS::Result+
+* +Lti::Advantage::AGS::ResultService+
+* +Lti::Advantage::AGS::LineItem+
+* +Lti::Advantage::AGS::LineItemService+

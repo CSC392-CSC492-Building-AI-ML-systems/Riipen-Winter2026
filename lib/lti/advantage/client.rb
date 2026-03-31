@@ -106,6 +106,16 @@ module Lti
         @launch_validator.validate!(id_token: id_token, state: state)
       end
 
+      # Builds an {AGS::ServiceClient} for the AGS claim advertised by +launch+.
+      #
+      # launch:: Validated {Launch} carrying the AGS endpoint claim.
+      # key_pair:: {KeyPair} used to sign JWT client assertions.
+      # clock:: Callable returning the current time for token expiry checks.
+      # http_request:: Optional callable used for outbound HTTP requests.
+      # enforce_same_origin:: Reject follow-up AGS URLs on a different origin.
+      # allowed_origins:: Optional allowlist of additional AGS origins.
+      #
+      # Returns an {AGS::ServiceClient}.
       def ags_service_client(
         launch:, key_pair:, clock: -> { Time.now }, http_request: nil,
         enforce_same_origin: true, allowed_origins: nil

@@ -153,9 +153,18 @@ AGS launches may include both NRPS and AGS claims in the same `id_token`. `Clien
 
 `Client#ags_service_client` uses the `Registration` token settings, validates granted AGS scopes per request, caches access tokens by scope set, tracks score timestamps per service client instance so duplicate or out-of-order publishes are rejected before they are sent, and rejects cross-origin AGS follow-up URLs by default so platform bearer tokens stay scoped to launch-advertised AGS origins. Pass `enforce_same_origin: false` only if your LMS legitimately paginates across multiple origins, or provide `allowed_origins:` to allowlist known pagination hosts while keeping origin checks enabled.
 
-## Demo app and tool JWKS
+## Publishing tool JWKS
 
-The Sinatra demo in `demo/app.rb` uses the `Client` flow for login and launch validation, exchanges a JWT client assertion for an NRPS access token during launch, and renders the first NRPS roster page directly in the embedded launch response so the Canvas demo does not depend on browser session cookies. If your LMS expects a distinct JWT audience for token exchange, set `LMS_TOKEN_AUDIENCE` so the demo passes that override through the registration. For local Canvas Docker setups, prefer a pasted `public_jwk` over an HTTP `public_jwk_url`; the demo exposes both `/lti/jwks` and a copy/paste-friendly `/lti/jwk` endpoint, and it persists a reusable dev private key under `tmp/demo-tool-private-key.pem` by default so the pasted JWK stays valid across restarts.
+LTI service token exchange uses JWT client assertions signed by your tool's private key. The platform must be able to fetch or receive the matching public JWK.
+
+```ruby
+key_pair = Lti::Advantage::KeyPair.new(ENV["TOOL_PRIVATE_KEY_PEM"], kid: "tool-key")
+
+# Publish this JSON from your application's JWKS endpoint.
+jwks = { keys: [key_pair.public_jwk] }
+```
+
+If you want the gem to generate a fresh RSA key pair for local development, omit the PEM and persist `key_pair.to_pem` somewhere your application can load on restart. If your LMS expects a JWT `aud` value different from `Registration#token_endpoint`, configure `Registration#token_audience`.
 
 ## API Documentation (RDoc)
 

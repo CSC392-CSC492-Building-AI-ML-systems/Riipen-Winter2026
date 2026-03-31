@@ -5,10 +5,11 @@ require "base64"
 
 module Lti
   module Advantage
-    # Generates and publishes the tool's own RSA key material.
+    # Generates and serializes the tool's RSA signing key material.
     #
-    # This class is kept primarily for demo and future service-signing use
-    # cases, such as exposing a tool JWKS document at +/lti/jwks+.
+    # Use this class when your application needs to sign JWT client assertions
+    # for LTI service access and publish the matching public JWK to the
+    # platform.
     class KeyPair
       # private_key:: Backing RSA private key.
       # kid:: Key identifier published in JWKS and JWT headers.

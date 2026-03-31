@@ -11,13 +11,36 @@ require "jwt"
 module Lti
   module Advantage
     module AGS
+      # Low-level AGS transport and token client.
+      #
+      # This class owns OAuth token exchange, origin checks, shared HTTP helpers,
+      # and the convenience factories for the score, result, and line item
+      # service wrappers.
       class ServiceClient
+        # OAuth client assertion type required by the LTI service token flow.
         CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+
+        # OAuth grant type used for AGS service tokens.
         TOKEN_GRANT_TYPE = "client_credentials"
+
+        # Default lifetime, in seconds, for locally generated client assertions.
         DEFAULT_TOKEN_TTL = 300
 
-        attr_reader :launch, :registration, :endpoint
+        # Validated launch used to derive AGS claims and deployment context.
+        attr_reader :launch
 
+        # Registration selected for the validated launch.
+        attr_reader :registration
+
+        # Parsed {Endpoint} wrapper for the launch's AGS endpoint claim.
+        attr_reader :endpoint
+
+        # launch:: Validated {Launch} advertising AGS support.
+        # key_pair:: {KeyPair} used to sign JWT client assertions.
+        # clock:: Callable returning the current time.
+        # http_request:: Optional callable used for outbound HTTP requests.
+        # enforce_same_origin:: Reject follow-up AGS URLs on a different origin.
+        # allowed_origins:: Optional allowlist of additional AGS origins.
         def initialize(
           launch:, key_pair:, clock: -> { Time.now }, http_request: nil,
           enforce_same_origin: true, allowed_origins: nil
@@ -35,18 +58,26 @@ module Lti
           @published_scores = {}
         end
 
+        # Returns a {ScoreService} bound to this shared client.
         def score_service
           ScoreService.new(service_client: self)
         end
 
+        # Returns a {ResultService} bound to this shared client.
         def result_service
           ResultService.new(service_client: self)
         end
 
+        # Returns a {LineItemService} bound to this shared client.
         def line_item_service
           LineItemService.new(service_client: self)
         end
 
+        # Performs an authenticated GET request and parses the JSON response.
+        #
+        # url:: Absolute AGS URL.
+        # accept:: Expected response media type.
+        # scopes:: OAuth scopes required for the request.
         def get_json(url:, accept:, scopes:)
           response = request(
             method: :get,
@@ -61,6 +92,8 @@ module Lti
           JSON.parse(body)
         end
 
+        # Performs an authenticated GET request and returns parsed JSON together
+        # with response header metadata.
         def get_json_with_headers(url:, accept:, scopes:)
           response = request(
             method: :get,
@@ -76,6 +109,7 @@ module Lti
           { data: data, link_header: link_header, content_type: content_type }
         end
 
+        # Performs an authenticated POST request with a JSON body.
         def post_json(url:, body:, content_type:, accept:, scopes:)
           request(
             method: :post,
@@ -89,6 +123,7 @@ module Lti
           )
         end
 
+        # Performs an authenticated PUT request with a JSON body.
         def put_json(url:, body:, content_type:, accept:, scopes:)
           request(
             method: :put,
@@ -102,6 +137,8 @@ module Lti
           )
         end
 
+        # Performs an authenticated AGS request after acquiring or reusing a
+        # bearer token for the supplied scopes.
         def request(method:, url:, scopes:, headers: {}, body: nil)
           token = access_token(scopes)
           normalized_url = normalize_service_request_url(url)
@@ -117,6 +154,8 @@ module Lti
           response
         end
 
+        # Resolves a follow-up URL from a Link header relation and applies the
+        # same origin checks used for direct service requests.
         def follow_up_url(link_header:, relation:, request_url:)
           resolved_url = LinkHeader.relation_url(link_header, relation, base_url: request_url)
           return nil if resolved_url.nil?
@@ -126,6 +165,8 @@ module Lti
           raise ServiceError, "Malformed AGS Link header: #{e.message}"
         end
 
+        # Returns a cached AGS bearer token for +scopes+, fetching a new token
+        # when necessary.
         def access_token(scopes)
           token_scopes = Array(scopes).map(&:to_s).sort.freeze
           raise ConfigurationError, "AGS endpoint claim is missing from this launch" if endpoint.nil?
@@ -146,6 +187,9 @@ module Lti
           token_response[:access_token]
         end
 
+        # Validates that a score publish is strictly newer than any previously
+        # published score for the same user and line item in this client
+        # instance.
         def validate_score_publish!(score:, score_url:)
           key = published_score_key(score_url: score_url, user_id: score.user_id)
           current_timestamp = Time.iso8601(score.timestamp)
@@ -156,6 +200,8 @@ module Lti
                 "score timestamp must be later than the previous score for this user and line item"
         end
 
+        # Records a successfully published score timestamp for duplicate and
+        # out-of-order detection within this client instance.
         def remember_score_publish!(score:, score_url:)
           key = published_score_key(score_url: score_url, user_id: score.user_id)
           @published_scores[key] = Time.iso8601(score.timestamp)

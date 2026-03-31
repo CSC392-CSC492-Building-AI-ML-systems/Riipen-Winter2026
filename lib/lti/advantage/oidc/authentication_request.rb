@@ -21,7 +21,14 @@ module Lti
           "prompt" => "none"
         }.freeze
 
-        attr_reader :authorization_endpoint, :state, :nonce
+        # Platform OIDC authorization endpoint URL.
+        attr_reader :authorization_endpoint
+
+        # One-time state value bound to the authentication request.
+        attr_reader :state
+
+        # One-time nonce value bound to the eventual launch token.
+        attr_reader :nonce
 
         # authorization_endpoint:: Platform OIDC auth endpoint URL.
         # client_id:: OAuth2 client id assigned by the platform.

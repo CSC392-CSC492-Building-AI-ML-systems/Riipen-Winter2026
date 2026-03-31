@@ -7,16 +7,33 @@ require "uri"
 module Lti
   module Advantage
     module AGS
+      # Client for the AGS Line Item service.
+      #
+      # Provides collection and member operations for line items, including
+      # pagination helpers and partial updates.
       class LineItemService
+        # Media type for a single AGS line item resource.
         LINE_ITEM_CONTENT_TYPE = "application/vnd.ims.lis.v2.lineitem+json"
+
+        # Media type for an AGS line item collection.
         LINE_ITEM_CONTAINER_CONTENT_TYPE = "application/vnd.ims.lis.v2.lineitemcontainer+json"
+
+        # Line item fields treated as optional strings during partial updates.
         OPTIONAL_STRING_FIELDS = Set.new(%i[id label resource_id tag resource_link_id start_date_time
                                             end_date_time]).freeze
 
+        # service_client:: {ServiceClient} used for authorization and HTTP.
         def initialize(service_client:)
           @service_client = service_client
         end
 
+        # Returns a single page of line items as an Array.
+        #
+        # resource_link_id:: Optional filter for a resource link.
+        # resource_id:: Optional tool-defined resource identifier filter.
+        # tag:: Optional tool-defined tag filter.
+        # limit:: Optional positive integer page-size hint.
+        # url:: Optional explicit lineitems collection URL override.
         def list(resource_link_id: nil, resource_id: nil, tag: nil, limit: nil, url: nil)
           page = list_page(
             resource_link_id: resource_link_id,
@@ -29,6 +46,9 @@ module Lti
           page[:line_items]
         end
 
+        # Returns a paginated line item response Hash.
+        #
+        # The returned Hash includes +:line_items+ and +:next_url+.
         def list_page(resource_link_id: nil, resource_id: nil, tag: nil, limit: nil, url: nil, page_url: nil)
           request_url = if page_url
                           page_url
@@ -53,6 +73,7 @@ module Lti
           parse_line_item_page(response, request_url: request_url)
         end
 
+        # Follows every available page and returns all discovered line items.
         def list_all(resource_link_id: nil, resource_id: nil, tag: nil, limit: nil, url: nil)
           line_items = []
           page_url = nil
@@ -82,6 +103,10 @@ module Lti
           line_items
         end
 
+        # Creates a new line item and returns the created {LineItem}.
+        #
+        # line_item:: {LineItem} instance or Hash accepted by {LineItem.from_h}.
+        # url:: Optional explicit lineitems collection URL override.
         def create(line_item:, url: nil)
           record = normalize_line_item(line_item)
           response = @service_client.post_json(
@@ -95,6 +120,9 @@ module Lti
           parse_line_item(response)
         end
 
+        # Fetches a concrete line item and returns a {LineItem}.
+        #
+        # line_item_url:: Optional explicit member URL override.
         def fetch(line_item_url: nil)
           response = @service_client.request(
             method: :get,
@@ -106,6 +134,11 @@ module Lti
           parse_line_item(response)
         end
 
+        # Replaces a line item after merging the supplied changes with the
+        # current service representation.
+        #
+        # line_item:: {LineItem} instance or Hash of partial changes.
+        # line_item_url:: Optional explicit member URL override.
         def update(line_item:, line_item_url: nil)
           changes = normalize_line_item_changes(line_item)
           url = @service_client.endpoint.line_item_url!(line_item_url: line_item_url, write: true)
@@ -126,6 +159,11 @@ module Lti
           parse_line_item(response, fallback: replacement_record)
         end
 
+        # Deletes a concrete line item.
+        #
+        # line_item_url:: Optional explicit member URL override.
+        #
+        # Returns +true+ when the delete request succeeds.
         def delete(line_item_url: nil)
           @service_client.request(
             method: :delete,

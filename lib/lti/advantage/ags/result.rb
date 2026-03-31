@@ -8,9 +8,34 @@ module Lti
       # Represents a single result from the AGS Result service (read-only gradebook cell).
       # https://www.imsglobal.org/spec/lti-ags/v2p0/#result-service
       class Result
-        attr_reader :id, :score_of, :user_id, :result_score, :result_maximum,
-                    :scoring_user_id, :comment
+        # Service-managed URL for this result.
+        attr_reader :id
 
+        # Line item URL referenced by the result's +scoreOf+ field.
+        attr_reader :score_of
+
+        # Platform-scoped subject identifier for the scored user.
+        attr_reader :user_id
+
+        # Numeric score awarded to the user, when present.
+        attr_reader :result_score
+
+        # Maximum score used to interpret +result_score+.
+        attr_reader :result_maximum
+
+        # Platform-scoped identifier for the scoring user, when present.
+        attr_reader :scoring_user_id
+
+        # Optional platform-provided comment attached to the result.
+        attr_reader :comment
+
+        # id:: Absolute result URL.
+        # score_of:: Absolute line item URL referenced by the result.
+        # user_id:: Platform-scoped subject identifier for the user.
+        # result_score:: Optional numeric result value.
+        # result_maximum:: Optional numeric maximum; defaults to +1+ when absent.
+        # scoring_user_id:: Optional scoring user identifier.
+        # comment:: Optional result comment.
         def initialize(
           id: nil, score_of: nil, user_id: nil, result_score: nil, result_maximum: nil,
           scoring_user_id: nil, comment: nil
@@ -24,6 +49,10 @@ module Lti
           @comment = optional_string(comment)
         end
 
+        # Builds a {Result} from a parsed AGS result Hash.
+        #
+        # Raises {ValidationError} when the payload does not match the AGS result
+        # schema expected by this gem.
         def self.from_json(hash)
           raise ValidationError, "result must be an object" unless hash.is_a?(Hash)
 
