@@ -166,6 +166,14 @@ jwks = { keys: [key_pair.public_jwk] }
 
 If you want the gem to generate a fresh RSA key pair for local development, omit the PEM and persist `key_pair.to_pem` somewhere your application can load on restart. If your LMS expects a JWT `aud` value different from `Registration#token_endpoint`, configure `Registration#token_audience`.
 
+## Scope and Responsibilities
+
+`lti-advantage` focuses on LTI 1.3 launch validation, claim access, and the mechanics needed to call LTI Advantage services. It validates protocol-level requirements, but it is not a full application framework.
+
+The gem does provide short-lived helpers such as one-time `state` and `nonce` replay protection, platform JWKS caching, and service token exchange. Your application is still responsible for production concerns like persistent replay protection in multi-process or multi-node deployments, session and authorization handling, key management, and broader operational and security controls.
+
+If you are building a production tool, do not rely on the default in-memory stores as your only replay-protection mechanism.
+
 ## API Documentation (RDoc)
 
 Comprehensive API documentation is embedded directly in `lib/**/*.rb`, with an additional overview at `docs/rdoc/overview.rdoc`.
