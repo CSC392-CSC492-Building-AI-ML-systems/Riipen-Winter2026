@@ -5,14 +5,13 @@ require "json"
 require "jwt"
 require "openssl"
 require "uri"
-require_relative "../../demo/app" # Require the demo app for integration testing
 
 PLATFORM_PRIVATE_KEY = OpenSSL::PKey::RSA.generate(2048)
 PLATFORM_JWK = JWT::JWK.new(PLATFORM_PRIVATE_KEY.public_key, kid: "platform-kid")
 
 RSpec.describe "OIDC Login Initiation Integration", type: :request do
   def app
-    Sinatra::Application
+    SpecSupport::TestToolApp
   end
 
   def extract_hidden_value(name)
@@ -71,7 +70,7 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
     post "/lti/launch", { id_token: id_token, state: state }
   end
 
-  def memberships_body(memberships_url:, members:, context: { "id" => "ctx-1", "title" => "Roster Demo" })
+  def memberships_body(memberships_url:, members:, context: { "id" => "ctx-1", "title" => "Course Roster" })
     {
       "id" => memberships_url,
       "context" => context,
@@ -83,6 +82,7 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
 
   before do
     header "Host", "127.0.0.1"
+    SpecSupport::TestToolApp.reset_configuration!
   end
 
   it "responds with success for valid initiation parameters" do
@@ -111,7 +111,7 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
     expect(last_response.body).to include("Missing required login initiation params")
   end
 
-  it "validates a launch end-to-end through the demo app" do
+  it "validates a launch end-to-end through the test app" do
     launch_with_optional_nrps
 
     expect(last_response).to be_ok
@@ -158,25 +158,25 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
     expect(last_response).to be_ok
     expect(last_response.body).to include("Launch successful")
     expect(last_response.body).to include("NRPS roster")
-    expect(last_response.body).to include("Roster Demo")
+    expect(last_response.body).to include("Course Roster")
     expect(last_response.body).to include("Jane Doe")
     expect(last_response.body).to include("jane@example.edu")
     expect(last_response.body).to include("Learner")
   end
 
-  it "uses registration token_audience for the demo NRPS token exchange" do
+  it "uses registration token_audience for the NRPS token exchange" do
+    base_registration = SpecSupport::TestToolApp.settings.registration
     registration_with_audience = Lti::Advantage::Registration.new(
-      issuer: LTI_REGISTRATION.issuer,
-      client_id: LTI_REGISTRATION.client_id,
-      authorization_endpoint: LTI_REGISTRATION.authorization_endpoint,
-      jwks_url: LTI_REGISTRATION.jwks_url,
-      token_endpoint: LTI_REGISTRATION.token_endpoint,
+      issuer: base_registration.issuer,
+      client_id: base_registration.client_id,
+      authorization_endpoint: base_registration.authorization_endpoint,
+      jwks_url: base_registration.jwks_url,
+      token_endpoint: base_registration.token_endpoint,
       token_audience: "https://canvas.docker/login/oauth2/token-audience",
-      deployment_ids: LTI_REGISTRATION.deployment_ids,
-      algorithms: LTI_REGISTRATION.algorithms
+      deployment_ids: base_registration.deployment_ids,
+      algorithms: base_registration.algorithms
     )
-    stub_const("LTI_REGISTRATION", registration_with_audience)
-    stub_const("LTI_CLIENT", Lti::Advantage::Client.new(registrations: [registration_with_audience]))
+    SpecSupport::TestToolApp.configure_with(registration: registration_with_audience)
 
     memberships_url = "https://lms.example.com/sections/2923/memberships"
 
@@ -287,7 +287,7 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
           success?: true,
           body: {
             "id" => next_page_url,
-            "context" => { "id" => "ctx-1", "title" => "Roster Demo" },
+            "context" => { "id" => "ctx-1", "title" => "Course Roster" },
             "members" => [{ "user_id" => "user-456", "roles" => ["Learner"], "status" => "Active" }]
           }.to_json,
           headers: {
