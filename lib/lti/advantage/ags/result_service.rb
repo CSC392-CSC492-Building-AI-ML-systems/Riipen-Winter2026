@@ -47,7 +47,7 @@ module Lti
           response = @service_client.get_json_with_headers(
             url: url,
             accept: RESULT_CONTAINER_TYPE,
-            scopes: [Endpoint::RESULT_SCOPE]
+            scopes: [Endpoint::RESULT_READONLY_SCOPE]
           )
 
           validate_media_type!(response[:content_type])

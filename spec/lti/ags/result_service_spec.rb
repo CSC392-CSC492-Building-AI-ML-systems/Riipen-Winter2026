@@ -29,7 +29,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       payload: {
         Lti::Advantage::Claims::AGS_ENDPOINT => {
           "lineitem" => lineitem_url,
-          "scope" => [Lti::Advantage::AGS::Endpoint::RESULT_SCOPE]
+          "scope" => [Lti::Advantage::AGS::Endpoint::RESULT_READONLY_SCOPE]
         }
       },
       header: {},
@@ -130,7 +130,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
     expect(token_request[:headers]["Content-Type"]).to eq("application/x-www-form-urlencoded")
     expect(token_form).to include(
       "grant_type" => "client_credentials",
-      "scope" => Lti::Advantage::AGS::Endpoint::RESULT_SCOPE,
+      "scope" => Lti::Advantage::AGS::Endpoint::RESULT_READONLY_SCOPE,
       "client_assertion_type" => "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
     )
     expect(token_form["client_assertion"]).not_to be_empty
@@ -666,7 +666,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       payload: {
         Lti::Advantage::Claims::AGS_ENDPOINT => {
           "lineitem" => "https://platform.example/line_items/42/?foo=bar",
-          "scope" => [Lti::Advantage::AGS::Endpoint::RESULT_SCOPE]
+          "scope" => [Lti::Advantage::AGS::Endpoint::RESULT_READONLY_SCOPE]
         }
       },
       header: {},
@@ -701,7 +701,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       payload: {
         Lti::Advantage::Claims::AGS_ENDPOINT => {
           "lineitem" => "https://platform.example/line_items/42?foo=bar&baz=qux",
-          "scope" => [Lti::Advantage::AGS::Endpoint::RESULT_SCOPE]
+          "scope" => [Lti::Advantage::AGS::Endpoint::RESULT_READONLY_SCOPE]
         }
       },
       header: {},
@@ -747,7 +747,7 @@ RSpec.describe Lti::Advantage::AGS::ResultService do
       payload: {
         Lti::Advantage::Claims::AGS_ENDPOINT => {
           "lineitem" => "https://platform.example/line_items/42?foo=bar&foo=baz&qux=1",
-          "scope" => [Lti::Advantage::AGS::Endpoint::RESULT_SCOPE]
+          "scope" => [Lti::Advantage::AGS::Endpoint::RESULT_READONLY_SCOPE]
         }
       },
       header: {},

@@ -23,9 +23,6 @@ module Lti
         # Scope URI required for AGS result reads.
         RESULT_READONLY_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/result.readonly"
 
-        # Backwards-compatible alias for {RESULT_READONLY_SCOPE}.
-        RESULT_SCOPE = RESULT_READONLY_SCOPE
-
         # Collection URL for line item list and create operations.
         attr_reader :lineitems_url
 

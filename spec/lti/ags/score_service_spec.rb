@@ -250,7 +250,7 @@ RSpec.describe Lti::Advantage::AGS::ScoreService do
       payload: {
         Lti::Advantage::Claims::AGS_ENDPOINT => {
           "lineitem" => "https://platform.example/line_items/42",
-          "scope" => [Lti::Advantage::AGS::Endpoint::RESULT_SCOPE]
+          "scope" => [Lti::Advantage::AGS::Endpoint::RESULT_READONLY_SCOPE]
         }
       },
       header: {},
