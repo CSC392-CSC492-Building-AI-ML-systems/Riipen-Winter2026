@@ -18,3 +18,5 @@ gem "rackup"
 gem "puma"
 
 gem "dotenv", "~> 3.2"
+
+gem "erb", "~> 6.0"

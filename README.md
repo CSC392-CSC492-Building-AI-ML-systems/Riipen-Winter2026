@@ -194,6 +194,10 @@ bundle exec rspec
 bundle exec rubocop
 ```
 
+## AI usage
+
+Portions of this codebase were generated with AI assistance and then reviewed, tested, and modified by the team.
+
 ## License
 
 MIT
