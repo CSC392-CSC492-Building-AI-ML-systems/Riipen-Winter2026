@@ -43,6 +43,46 @@ helpers do
       enforce_same_origin: true
     ).memberships
   end
+
+  def fetch_ags_summary(launch)
+    return { available: false } unless launch.ags_available?
+
+    ags_client = LTI_CLIENT.ags_service_client(launch: launch, key_pair: TOOL_KEY_PAIR)
+    endpoint = launch.ags_endpoint
+
+    line_items = if endpoint.lineitem_url
+                   [ags_client.line_item_service.fetch]
+                 elsif endpoint.lineitems_url
+                   ags_client.line_item_service.list(limit: 5)
+                 else
+                   []
+                 end
+
+    results = if endpoint.lineitem_url && endpoint.supports_scope?(Lti::Advantage::AGS::Endpoint::RESULT_READONLY_SCOPE)
+                ags_client.result_service.list(limit: 5)
+              else
+                []
+              end
+
+    {
+      available: true,
+      scopes: endpoint.scopes,
+      lineitems_url: endpoint.lineitems_url,
+      lineitem_url: endpoint.lineitem_url,
+      line_items: line_items,
+      results: results
+    }
+  rescue Lti::Advantage::Error => e
+    {
+      available: true,
+      scopes: launch.ags_endpoint&.scopes || [],
+      lineitems_url: launch.ags_endpoint&.lineitems_url,
+      lineitem_url: launch.ags_endpoint&.lineitem_url,
+      line_items: [],
+      results: [],
+      error: e.message
+    }
+  end
 end
 
 # LTI Configuration (Loaded from .env)
@@ -122,6 +162,7 @@ post "/lti/launch" do
 
   memberships_result = nil
   nrps_error = nil
+  ags_summary = fetch_ags_summary(launch)
 
   if launch.nrps_available?
     begin
@@ -132,7 +173,12 @@ post "/lti/launch" do
   end
 
   content_type :html
-  erb :launch_result, locals: { launch: launch, memberships_result: memberships_result, nrps_error: nrps_error }
+  erb :launch_result, locals: {
+    launch: launch,
+    memberships_result: memberships_result,
+    nrps_error: nrps_error,
+    ags_summary: ags_summary
+  }
 rescue KeyError
   halt 400, "Missing id_token or state"
 rescue Lti::Advantage::ReplayError => e
@@ -200,6 +246,14 @@ __END__
       border-radius: 0.25rem;
       padding: 0.1rem 0.3rem;
     }
+
+    .section {
+      margin-top: 2rem;
+    }
+
+    .status {
+      font-weight: 600;
+    }
   </style>
 </head>
 <body>
@@ -208,6 +262,80 @@ __END__
   <p>Deployment ID: <code><%= escape_html(launch.deployment_id) %></code></p>
   <p>Roles: <%= summarized_roles(launch.roles) %></p>
 
+  <div class="section">
+    <h2>AGS grade services</h2>
+    <% if ags_summary[:available] %>
+      <p class="status">Canvas granted AGS capability for this launch.</p>
+      <p>Lineitems URL: <code><%= escape_html(ags_summary[:lineitems_url]) %></code></p>
+      <p>Lineitem URL: <code><%= escape_html(ags_summary[:lineitem_url]) %></code></p>
+
+      <h3>Granted scopes</h3>
+      <ul>
+        <% ags_summary[:scopes].each do |scope| %>
+          <li><code><%= escape_html(scope) %></code></li>
+        <% end %>
+      </ul>
+
+      <% if ags_summary[:error] %>
+        <p>The launch advertised AGS, but the demo could not complete the read-only AGS probe.</p>
+        <p><code><%= escape_html(ags_summary[:error]) %></code></p>
+      <% else %>
+        <h3>Line items</h3>
+        <% if ags_summary[:line_items].empty? %>
+          <p>No line items were returned for this launch context.</p>
+        <% else %>
+          <table>
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>ID</th>
+                <th>Score Maximum</th>
+                <th>Resource Link ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% ags_summary[:line_items].each do |line_item| %>
+                <tr>
+                  <td><%= escape_html(line_item.label) %></td>
+                  <td><code><%= escape_html(line_item.id) %></code></td>
+                  <td><%= escape_html(line_item.score_maximum) %></td>
+                  <td><%= escape_html(line_item.resource_link_id) %></td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        <% end %>
+
+        <% if ags_summary[:results].any? %>
+          <h3>Results</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>User ID</th>
+                <th>Result Score</th>
+                <th>Result Maximum</th>
+                <th>Comment</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% ags_summary[:results].each do |result| %>
+                <tr>
+                  <td><%= escape_html(result.user_id) %></td>
+                  <td><%= escape_html(result.result_score) %></td>
+                  <td><%= escape_html(result.result_maximum) %></td>
+                  <td><%= escape_html(result.comment) %></td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        <% end %>
+      <% end %>
+    <% else %>
+      <p>This launch did not include the AGS claim.</p>
+    <% end %>
+  </div>
+
+  <div class="section">
   <% if memberships_result %>
     <h2>NRPS roster</h2>
     <p>Context: <strong><%= escape_html(memberships_result.context&.fetch("title", nil) || "n/a") %></strong></p>
@@ -249,5 +377,6 @@ __END__
   <% else %>
     <p>This launch did not include the NRPS claim.</p>
   <% end %>
+  </div>
 </body>
 </html>

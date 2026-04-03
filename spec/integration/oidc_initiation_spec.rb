@@ -24,7 +24,7 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
     allow(Net::HTTP).to receive(:get_response).and_return(response)
   end
 
-  def base_launch_payload(nonce:, nrps_claim: nil)
+  def base_launch_payload(nonce:, nrps_claim: nil, ags_claim: nil)
     payload = {
       "iss" => ENV["LMS_ISSUER"] || "http://127.0.0.1:3000",
       "aud" => [ENV["CLIENT_ID"] || "10000000000001"],
@@ -43,10 +43,11 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
       ]
     }
     payload[Lti::Advantage::Launch::NRPS_CLAIM] = nrps_claim if nrps_claim
+    payload[Lti::Advantage::Claims::AGS_ENDPOINT] = ags_claim if ags_claim
     payload
   end
 
-  def launch_with_optional_nrps(memberships_url: nil)
+  def launch_with_optional_nrps(memberships_url: nil, ags_claim: nil)
     post "/oidc/init", valid_params
 
     state = extract_hidden_value("state")
@@ -61,7 +62,7 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
                  end
 
     id_token = JWT.encode(
-      base_launch_payload(nonce: nonce, nrps_claim: nrps_claim),
+      base_launch_payload(nonce: nonce, nrps_claim: nrps_claim, ags_claim: ags_claim),
       PLATFORM_PRIVATE_KEY,
       "RS256",
       kid: "platform-kid"
@@ -302,6 +303,85 @@ RSpec.describe "OIDC Login Initiation Integration", type: :request do
 
     expect(last_response).to be_ok
     expect(last_response.body).to include("renders only the first NRPS page during launch")
+  end
+
+  it "renders launch, AGS, and NRPS details together for the combined demo" do
+    memberships_url = "https://lms.example.com/sections/2923/memberships"
+    ags_endpoint = {
+      "lineitems" => "https://lms.example.com/api/lti/courses/1/line_items",
+      "lineitem" => "https://lms.example.com/api/lti/courses/1/line_items/42",
+      "scope" => [
+        Lti::Advantage::AGS::Endpoint::LINEITEM_SCOPE,
+        Lti::Advantage::AGS::Endpoint::RESULT_READONLY_SCOPE
+      ]
+    }
+
+    allow(Faraday).to receive(:post).and_return(
+      double(
+        "token_resp",
+        status: 200,
+        body: { "access_token" => "roster-token", "token_type" => "Bearer" }.to_json
+      )
+    )
+
+    allow(Faraday).to receive(:get).and_return(
+      double(
+        "memberships_resp",
+        success?: true,
+        body: memberships_body(
+          memberships_url: memberships_url,
+          members: [
+            {
+              "user_id" => "user-123",
+              "name" => "Jane Doe",
+              "email" => "jane@example.edu",
+              "roles" => ["http://purl.imsglobal.org/vocab/lis/v2/membership#Learner"],
+              "status" => "Active"
+            }
+          ]
+        ),
+        headers: {
+          "link" => "",
+          "content-type" => Lti::Advantage::Services::NamesRoleService::MEDIA_TYPE
+        }
+      )
+    )
+
+    result = Lti::Advantage::AGS::Result.new(
+      id: "https://lms.example.com/api/lti/courses/1/line_items/42/results/1",
+      score_of: ags_endpoint.fetch("lineitem"),
+      user_id: "user-123",
+      result_score: 9,
+      result_maximum: 10,
+      comment: "Great work"
+    )
+    line_item = Lti::Advantage::AGS::LineItem.new(
+      id: ags_endpoint.fetch("lineitem"),
+      label: "Canvas Demo Assignment",
+      score_maximum: 10,
+      resource_link_id: "resource-42"
+    )
+    ags_client = instance_double("Lti::Advantage::AGS::ServiceClient")
+    allow(ags_client).to receive(:line_item_service).and_return(instance_double(
+      "Lti::Advantage::AGS::LineItemService",
+      fetch: line_item
+    ))
+    allow(ags_client).to receive(:result_service).and_return(instance_double(
+      "Lti::Advantage::AGS::ResultService",
+      list: [result]
+    ))
+    allow(SpecSupport::TestToolApp.settings.client).to receive(:ags_service_client).and_return(ags_client)
+
+    launch_with_optional_nrps(memberships_url: memberships_url, ags_claim: ags_endpoint)
+
+    expect(last_response).to be_ok
+    expect(last_response.body).to include("Launch successful")
+    expect(last_response.body).to include("AGS grade services")
+    expect(last_response.body).to include("Canvas granted AGS capability for this launch")
+    expect(last_response.body).to include("Canvas Demo Assignment")
+    expect(last_response.body).to include("Great work")
+    expect(last_response.body).to include("NRPS roster")
+    expect(last_response.body).to include("Jane Doe")
   end
 
   it "returns guidance for the legacy memberships endpoint" do

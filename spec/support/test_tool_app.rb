@@ -78,7 +78,9 @@ module SpecSupport
         HTML
       end
 
-      def launch_result_body(launch:, memberships_result:, nrps_error:)
+      def launch_result_body(launch:, memberships_result:, nrps_error:, ags_summary:)
+        ags_section = build_ags_section(ags_summary)
+
         nrps_section = if memberships_result
                          build_memberships_section(memberships_result)
                        elsif nrps_error
@@ -129,9 +131,92 @@ module SpecSupport
             <p>Welcome, student! Your ID is: <strong>#{escape_html(launch.subject || "anonymous")}</strong>.</p>
             <p>Deployment ID: <code>#{escape_html(launch.deployment_id)}</code></p>
             <p>Roles: #{summarized_roles(launch.roles)}</p>
+            #{ags_section}
             #{nrps_section}
           </body>
           </html>
+        HTML
+      end
+
+      def build_ags_section(ags_summary)
+        return "<p>This launch did not include the AGS claim.</p>" unless ags_summary[:available]
+
+        scopes = ags_summary[:scopes].map { |scope| "<li><code>#{escape_html(scope)}</code></li>" }.join
+        line_item_rows = ags_summary[:line_items].map do |line_item|
+          <<~HTML
+            <tr>
+              <td>#{escape_html(line_item.label)}</td>
+              <td><code>#{escape_html(line_item.id)}</code></td>
+              <td>#{escape_html(line_item.score_maximum)}</td>
+              <td>#{escape_html(line_item.resource_link_id)}</td>
+            </tr>
+          HTML
+        end.join
+        result_rows = ags_summary[:results].map do |result|
+          <<~HTML
+            <tr>
+              <td>#{escape_html(result.user_id)}</td>
+              <td>#{escape_html(result.result_score)}</td>
+              <td>#{escape_html(result.result_maximum)}</td>
+              <td>#{escape_html(result.comment)}</td>
+            </tr>
+          HTML
+        end.join
+
+        operational_section = if ags_summary[:error]
+                                <<~HTML
+                                  <p>The launch advertised AGS, but the demo could not complete the read-only AGS probe.</p>
+                                  <p><code>#{escape_html(ags_summary[:error])}</code></p>
+                                HTML
+                              else
+                                <<~HTML
+                                  <h3>Line items</h3>
+                                  #{ags_summary[:line_items].empty? ? "<p>No line items were returned for this launch context.</p>" : <<~TABLE}
+                                    <table>
+                                      <thead>
+                                        <tr>
+                                          <th>Label</th>
+                                          <th>ID</th>
+                                          <th>Score Maximum</th>
+                                          <th>Resource Link ID</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        #{line_item_rows}
+                                      </tbody>
+                                    </table>
+                                  TABLE
+                                  #{ags_summary[:results].any? ? <<~TABLE : ""}
+                                    <h3>Results</h3>
+                                    <table>
+                                      <thead>
+                                        <tr>
+                                          <th>User ID</th>
+                                          <th>Result Score</th>
+                                          <th>Result Maximum</th>
+                                          <th>Comment</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        #{result_rows}
+                                      </tbody>
+                                    </table>
+                                  TABLE
+                                HTML
+                              end
+
+        <<~HTML
+          <div class="section">
+            <h2>AGS grade services</h2>
+            <p>Canvas granted AGS capability for this launch.</p>
+            <p>Lineitems URL: <code>#{escape_html(ags_summary[:lineitems_url])}</code></p>
+            <p>Lineitem URL: <code>#{escape_html(ags_summary[:lineitem_url])}</code></p>
+            <h3>Granted scopes</h3>
+            <ul>
+              #{scopes}
+            </ul>
+            #{operational_section}
+          </div>
         HTML
       end
 
@@ -193,6 +278,46 @@ module SpecSupport
           enforce_same_origin: true
         ).memberships
       end
+
+      def fetch_ags_summary(launch)
+        return { available: false } unless launch.ags_available?
+
+        ags_client = settings.client.ags_service_client(launch: launch, key_pair: settings.tool_key_pair)
+        endpoint = launch.ags_endpoint
+
+        line_items = if endpoint.lineitem_url
+                       [ags_client.line_item_service.fetch]
+                     elsif endpoint.lineitems_url
+                       ags_client.line_item_service.list(limit: 5)
+                     else
+                       []
+                     end
+
+        results = if endpoint.lineitem_url && endpoint.supports_scope?(Lti::Advantage::AGS::Endpoint::RESULT_READONLY_SCOPE)
+                    ags_client.result_service.list(limit: 5)
+                  else
+                    []
+                  end
+
+        {
+          available: true,
+          scopes: endpoint.scopes,
+          lineitems_url: endpoint.lineitems_url,
+          lineitem_url: endpoint.lineitem_url,
+          line_items: line_items,
+          results: results
+        }
+      rescue Lti::Advantage::Error => e
+        {
+          available: true,
+          scopes: launch.ags_endpoint&.scopes || [],
+          lineitems_url: launch.ags_endpoint&.lineitems_url,
+          lineitem_url: launch.ags_endpoint&.lineitem_url,
+          line_items: [],
+          results: [],
+          error: e.message
+        }
+      end
     end
 
     %i[get post].each do |method|
@@ -217,6 +342,7 @@ module SpecSupport
 
       memberships_result = nil
       nrps_error = nil
+      ags_summary = fetch_ags_summary(launch)
 
       if launch.nrps_available?
         begin
@@ -227,7 +353,7 @@ module SpecSupport
       end
 
       content_type :html
-      launch_result_body(launch: launch, memberships_result: memberships_result, nrps_error: nrps_error)
+      launch_result_body(launch: launch, memberships_result: memberships_result, nrps_error: nrps_error, ags_summary: ags_summary)
     rescue KeyError
       halt 400, "Missing id_token or state"
     rescue Lti::Advantage::ReplayError => e
