@@ -194,6 +194,10 @@ bundle exec rspec
 bundle exec rubocop
 ```
 
+## Demo App
+
+We have a simple demo app showing how this gem works in `demo/`, detailed set up instructions in `demo/test_setup.md`.
+
 ## AI usage
 
 Portions of this codebase were generated with AI assistance and then reviewed, tested, and modified by the team.
